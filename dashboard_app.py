@@ -34,13 +34,22 @@ TRADES_DATA = None
 DAILY_DATA = None
 
 def load_backtest_data():
-    """Load backtest results"""
+    """Load backtest results - prioritize latest detailed results"""
     try:
+        # Try latest detailed results first
+        latest_results_path = Path('/mnt/user-data/outputs/latest_backtest_results.json')
+        if latest_results_path.exists():
+            with open(latest_results_path, 'r') as f:
+                data = json.load(f)
+            return data  # Returns full structure with 'trades' and 'results'
+
+        # Fallback to old trade_history.json
         trade_history_path = Path('/mnt/user-data/outputs/trade_history.json')
         if trade_history_path.exists():
             with open(trade_history_path, 'r') as f:
                 trades = json.load(f)
-            return trades
+            return {'trades': trades, 'results': None}  # Wrap in same structure
+
         return None
     except Exception as e:
         print(f"Error loading data: {e}")
@@ -479,6 +488,142 @@ def create_trade_table(trades, outcome_filter='all', direction_filter='all'):
         style_table={'overflowX': 'auto'}
     )
 
+def create_ml_decision_analysis(trades):
+    """Create ML decision analysis visualization"""
+    if not trades or len(trades) == 0:
+        return html.Div("No trade data available", className="text-muted")
+
+    # Calculate average feature values for wins vs losses
+    wins = [t for t in trades if t.get('outcome') == 'WIN']
+    losses = [t for t in trades if t.get('outcome') == 'LOSS']
+
+    if not wins and not losses:
+        return html.Div("No completed trades", className="text-muted")
+
+    # Extract feature data
+    feature_names = ['rsi', 'bb_position', 'zscore', 'trend_strength', 'volume_ratio']
+    win_features = {}
+    loss_features = {}
+
+    for feat in feature_names:
+        win_values = [t.get('features', {}).get(feat, 0) for t in wins if 'features' in t]
+        loss_values = [t.get('features', {}).get(feat, 0) for t in losses if 'features' in t]
+
+        win_features[feat] = np.mean(win_values) if win_values else 0
+        loss_features[feat] = np.mean(loss_values) if loss_values else 0
+
+    # Create feature comparison chart
+    fig_features = go.Figure()
+
+    fig_features.add_trace(go.Bar(
+        name='Winning Trades',
+        x=feature_names,
+        y=[win_features[f] for f in feature_names],
+        marker_color='#28a745',
+        text=[f"{win_features[f]:.2f}" for f in feature_names],
+        textposition='outside'
+    ))
+
+    fig_features.add_trace(go.Bar(
+        name='Losing Trades',
+        x=feature_names,
+        y=[loss_features[f] for f in feature_names],
+        marker_color='#dc3545',
+        text=[f"{loss_features[f]:.2f}" for f in feature_names],
+        textposition='outside'
+    ))
+
+    fig_features.update_layout(
+        title="Average Feature Values: Winning vs Losing Trades",
+        xaxis_title="Feature",
+        yaxis_title="Average Value",
+        barmode='group',
+        height=400,
+        hovermode='x unified',
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+
+    # ML Confidence Distribution
+    ml_confidences = [t.get('ml_confidence', 0) for t in trades if 'ml_confidence' in t]
+    outcomes = [t.get('outcome') for t in trades if 'ml_confidence' in t]
+
+    win_confidences = [ml_confidences[i] for i, o in enumerate(outcomes) if o == 'WIN']
+    loss_confidences = [ml_confidences[i] for i, o in enumerate(outcomes) if o == 'LOSS']
+
+    fig_confidence = go.Figure()
+
+    fig_confidence.add_trace(go.Histogram(
+        x=win_confidences,
+        name='Winning Trades',
+        marker_color='#28a745',
+        opacity=0.7,
+        nbinsx=20
+    ))
+
+    fig_confidence.add_trace(go.Histogram(
+        x=loss_confidences,
+        name='Losing Trades',
+        marker_color='#dc3545',
+        opacity=0.7,
+        nbinsx=20
+    ))
+
+    fig_confidence.update_layout(
+        title="ML Confidence Score Distribution",
+        xaxis_title="Confidence Score",
+        yaxis_title="Number of Trades",
+        barmode='overlay',
+        height=350,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+
+    # Stats cards
+    avg_win_conf = np.mean(win_confidences) if win_confidences else 0
+    avg_loss_conf = np.mean(loss_confidences) if loss_confidences else 0
+
+    stats_cards = dbc.Row([
+        dbc.Col([
+            dbc.Card([
+                dbc.CardBody([
+                    html.H6("Avg ML Confidence (Wins)", className="card-subtitle text-muted"),
+                    html.H3(f"{avg_win_conf:.1%}", className="card-title text-success")
+                ])
+            ])
+        ], width=3),
+        dbc.Col([
+            dbc.Card([
+                dbc.CardBody([
+                    html.H6("Avg ML Confidence (Losses)", className="card-subtitle text-muted"),
+                    html.H3(f"{avg_loss_conf:.1%}", className="card-title text-danger")
+                ])
+            ])
+        ], width=3),
+        dbc.Col([
+            dbc.Card([
+                dbc.CardBody([
+                    html.H6("Confidence Difference", className="card-subtitle text-muted"),
+                    html.H3(f"{(avg_win_conf - avg_loss_conf):.1%}",
+                           className=f"card-title {'text-success' if avg_win_conf > avg_loss_conf else 'text-warning'}")
+                ])
+            ])
+        ], width=3),
+        dbc.Col([
+            dbc.Card([
+                dbc.CardBody([
+                    html.H6("Total Analyzed Trades", className="card-subtitle text-muted"),
+                    html.H3(f"{len(trades)}", className="card-title text-primary")
+                ])
+            ])
+        ], width=3)
+    ], className="mb-4")
+
+    return html.Div([
+        stats_cards,
+        dcc.Graph(figure=fig_features),
+        dcc.Graph(figure=fig_confidence)
+    ])
+
+
 # Layout
 app.layout = dbc.Container([
     html.H2("ML Mean Reversion Bot - Backtest Dashboard",
@@ -567,6 +712,17 @@ app.layout = dbc.Container([
         ])
     ], className="mb-4 p-3", style={'backgroundColor': '#f8f9fa', 'borderRadius': '5px'}),
 
+    html.Hr(),
+
+    # ML Decision Analysis
+    html.Div([
+        html.H4("🤖 ML Decision Analysis", className="mb-3"),
+        html.P("Understand what factors influenced the ML model's trade decisions", className="text-muted"),
+        html.Div(id='ml-decision-analysis')
+    ], className="mb-4 p-3", style={'backgroundColor': '#f8f9fa', 'borderRadius': '5px'}),
+
+    html.Hr(),
+
     # Trade List
     html.Div([
         html.H4("Trade List (Click to View Chart)", className="mb-3"),
@@ -585,21 +741,25 @@ app.layout = dbc.Container([
      Output('header-metrics', 'children'),
      Output('day-of-week-charts', 'children'),
      Output('equity-drawdown-chart', 'children'),
-     Output('daily-pnl-table-container', 'children')],
+     Output('daily-pnl-table-container', 'children'),
+     Output('ml-decision-analysis', 'children')],
     Input('trades-store', 'data')
 )
 def load_initial_data(_):
     """Load data on startup"""
-    trades = load_backtest_data()
+    data = load_backtest_data()
 
-    if not trades:
+    if not data:
         no_data = html.Div([
             html.H4("No Backtest Data Found", className="text-center text-danger mt-5"),
             html.P("Please run a backtest first:", className="text-center"),
-            html.Code("python example_usage.py", className="d-block text-center mb-2"),
+            html.Code("python run_backtest.py --days 7", className="d-block text-center mb-2"),
             html.P("Then refresh this page.", className="text-center text-muted")
         ])
-        return None, no_data, no_data, no_data, no_data
+        return None, no_data, no_data, no_data, no_data, no_data
+
+    # Extract trades from data structure
+    trades = data.get('trades', data) if isinstance(data, dict) else data
 
     # Prepare daily data
     daily_df = prepare_daily_data(trades)
@@ -609,7 +769,8 @@ def load_initial_data(_):
         create_header_metrics(trades),
         create_day_of_week_charts(trades),
         create_equity_drawdown_chart(trades),
-        create_daily_pnl_table(daily_df)
+        create_daily_pnl_table(daily_df),
+        create_ml_decision_analysis(trades)
     )
 
 @app.callback(

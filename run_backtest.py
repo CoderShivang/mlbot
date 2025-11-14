@@ -24,6 +24,7 @@ Usage Examples:
 
 import argparse
 import sys
+import json
 from datetime import datetime, timedelta
 from pathlib import Path
 import pandas as pd
@@ -366,8 +367,11 @@ def display_results(results):
     sr_color = Colors.GREEN if results['sharpe_ratio'] > 1.5 else Colors.YELLOW if results['sharpe_ratio'] > 1.0 else Colors.RED
     print(f"Sharpe Ratio:       {sr_color}{results['sharpe_ratio']:.2f}{Colors.ENDC}")
 
-    print(f"Max Drawdown:       {Colors.RED}{results['max_drawdown_pct']:.2%} (${results['max_drawdown_usd']:.2f}){Colors.ENDC}")
-    print(f"Max Consecutive:    {results['max_consecutive_losses']} losses")
+    # Use 'max_drawdown' instead of 'max_drawdown_pct'
+    max_dd = results.get('max_drawdown', 0)
+    max_dd_usd = results.get('max_drawdown_usd', 0)
+    print(f"Max Drawdown:       {Colors.RED}{max_dd:.2%} (${max_dd_usd:.2f}){Colors.ENDC}")
+    print(f"Max Consecutive:    {results.get('max_consecutive_losses', 0)} losses")
 
     # Fees
     print(f"\n{Colors.BOLD}Execution Details{Colors.ENDC}")
@@ -392,6 +396,101 @@ def display_results(results):
         print_error("POOR - Strategy needs improvement")
 
     print(f"\n{'='*80}\n")
+
+
+def save_detailed_results(results: dict, bot, output_path: Path, args):
+    """
+    Save detailed backtest results including ML decision data for dashboard
+
+    Args:
+        results: Backtest results dictionary
+        bot: MLMeanReversionBot instance
+        output_path: Path to save JSON file
+        args: Command-line arguments
+    """
+    # Extract trade details with ML decision information
+    trades_data = []
+
+    for trade_info in results.get('trades', []):
+        setup = trade_info['setup']
+
+        # Serialize TradeSetup data
+        trade_detail = {
+            'timestamp': setup.timestamp.isoformat() if hasattr(setup.timestamp, 'isoformat') else str(setup.timestamp),
+            'direction': setup.direction,
+            'entry_price': trade_info['entry_price'],
+            'exit_price': trade_info['exit_price'],
+            'outcome': setup.actual_outcome,
+            'pnl_usd': trade_info['net_pnl_usd'],
+            'pnl_pct': setup.pnl_percent,
+            'position_size': trade_info['position_size_usd'],
+            'fees': trade_info['fees_usd'],
+            'hit_type': trade_info['hit_type'],
+
+            # ML Decision Factors
+            'ml_confidence': setup.confidence_score,
+            'ml_success_prob': setup.predicted_success_prob,
+
+            # Market Features at Entry
+            'features': {
+                'rsi': float(setup.rsi),
+                'bb_position': float(setup.bb_position),
+                'zscore': float(setup.zscore),
+                'volatility_regime': setup.volatility_regime,
+                'trend_strength': float(setup.trend_strength),
+                'volume_ratio': float(setup.volume_ratio),
+                'recent_drawdown': float(setup.recent_drawdown),
+                'pattern_momentum': float(setup.pattern_momentum),
+                'support_resistance_proximity': float(setup.support_resistance_proximity),
+                'consolidation_duration': int(setup.consolidation_duration)
+            },
+
+            # Similar Historical Trades
+            'similar_trades': setup.similar_trades if setup.similar_trades else []
+        }
+
+        trades_data.append(trade_detail)
+
+    # Prepare summary statistics
+    summary = {
+        'backtest_date': datetime.now().isoformat(),
+        'parameters': {
+            'symbol': args.symbol,
+            'interval': args.interval,
+            'days': getattr(args, 'days', None),
+            'start_date': getattr(args, 'start', None),
+            'end_date': getattr(args, 'end', None),
+            'initial_capital': args.capital,
+            'leverage': args.leverage,
+            'risk_per_trade': args.risk,
+            'stop_loss_pct': args.stop_loss,
+            'take_profit_pct': args.take_profit,
+            'use_limit_orders': not args.use_market,
+            'trailing_stop': not args.no_trailing
+        },
+        'results': {
+            'total_trades': results['total_trades'],
+            'winning_trades': results['winning_trades'],
+            'losing_trades': results['losing_trades'],
+            'win_rate': results['win_rate'],
+            'total_return': results['total_return'],
+            'final_capital': results['final_capital'],
+            'profit_factor': results['profit_factor'],
+            'sharpe_ratio': results['sharpe_ratio'],
+            'max_drawdown': results.get('max_drawdown', 0),
+            'max_drawdown_usd': results.get('max_drawdown_usd', 0),
+            'total_fees_paid': results['total_fees_paid'],
+            'avg_win_usd': results.get('avg_win_usd', 0),
+            'avg_loss_usd': results.get('avg_loss_usd', 0),
+            'avg_win_pct': results.get('avg_win_pct', 0),
+            'avg_loss_pct': results.get('avg_loss_pct', 0)
+        },
+        'trades': trades_data
+    }
+
+    # Save to JSON
+    with open(output_path, 'w') as f:
+        json.dump(summary, f, indent=2, default=str)
 
 
 def main():
@@ -470,6 +569,8 @@ Notes:
                        help='Output directory for results')
     parser.add_argument('--no-save', action='store_true',
                        help='Do not save model and results')
+    parser.add_argument('--dashboard', action='store_true',
+                       help='Auto-launch dashboard after backtest completes')
 
     args = parser.parse_args()
 
@@ -564,17 +665,55 @@ Notes:
 
         bot.save_state(str(model_path), str(trades_path))
 
+        # Save detailed backtest results for dashboard
+        results_path = output_dir / 'latest_backtest_results.json'
+        save_detailed_results(results, bot, results_path, args)
+
         print_success(f"Model saved to: {model_path}")
         print_success(f"Trades saved to: {trades_path}")
-
-        print_info("\nNext steps:")
-        print("   1. Review results above")
-        print("   2. Run dashboard: python dashboard_app.py")
-        print("   3. If satisfied, deploy live: python live_trading_bot.py")
+        print_success(f"Detailed results saved to: {results_path}")
 
     print(f"\n{Colors.GREEN}{Colors.BOLD}{'='*80}{Colors.ENDC}")
     print(f"{Colors.GREEN}{Colors.BOLD}Backtest Complete!{Colors.ENDC}")
     print(f"{Colors.GREEN}{Colors.BOLD}{'='*80}{Colors.ENDC}\n")
+
+    # Auto-launch dashboard if requested
+    if args.dashboard and not args.no_save:
+        print_info("\nLaunching dashboard...")
+        print(f"   Opening at http://localhost:8050")
+        print(f"   Press {Colors.CYAN}Ctrl+C{Colors.ENDC} to stop\n")
+
+        import subprocess
+        import webbrowser
+        import time
+
+        # Launch dashboard in background
+        dashboard_process = subprocess.Popen(
+            [sys.executable, 'dashboard_app.py'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+
+        # Wait a moment for server to start
+        time.sleep(2)
+
+        # Open browser
+        webbrowser.open('http://localhost:8050')
+
+        print_success("Dashboard launched! View your results in the browser.")
+        print_info("Press Ctrl+C to stop the dashboard server...")
+
+        try:
+            dashboard_process.wait()
+        except KeyboardInterrupt:
+            print(f"\n{Colors.YELLOW}Stopping dashboard...{Colors.ENDC}")
+            dashboard_process.terminate()
+            dashboard_process.wait()
+    elif not args.no_save:
+        print_info("\nNext steps:")
+        print("   1. Review results above")
+        print(f"   2. Run dashboard: {Colors.CYAN}python dashboard_app.py{Colors.ENDC}")
+        print("   3. If satisfied, deploy live: python live_trading_bot.py")
 
 
 if __name__ == '__main__':
