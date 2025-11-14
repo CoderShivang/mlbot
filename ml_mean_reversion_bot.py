@@ -472,13 +472,23 @@ class MLPatternRecognizer:
                 ])
                 
                 # Note: This is simplified - in production, store full feature vectors
-                # For now, use available features
-                available_features = ['rsi', 'bb_position', 'zscore', 'trend_strength', 
-                                    'volume_ratio', 'pattern_momentum', 'recent_drawdown']
-                
+                # For now, use available features (map DataFrame columns to TradeSetup attributes)
+                df_feature_names = ['rsi', 'bb_position', 'zscore', 'trend_strength',
+                                   'volume_ratio', 'momentum', 'drawdown']
+                trade_attr_names = ['rsi', 'bb_position', 'zscore', 'trend_strength',
+                                   'volume_ratio', 'pattern_momentum', 'recent_drawdown']
+
+                # Only use features that exist in current_features
+                available_df_features = [f for f in df_feature_names if f in current_features.index]
+                available_trade_attrs = [trade_attr_names[df_feature_names.index(f)]
+                                        for f in available_df_features]
+
+                if len(available_df_features) == 0:
+                    continue  # Skip if no features available
+
                 distance = np.linalg.norm(
-                    current_features[available_features].values - 
-                    np.array([getattr(trade, f) for f in available_features])
+                    current_features[available_df_features].values -
+                    np.array([getattr(trade, attr) for attr in available_trade_attrs])
                 )
                 
                 similarities.append({
