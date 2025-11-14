@@ -43,8 +43,9 @@ def test_signal_generation():
     df_features = feature_engineer.calculate_features(df)
 
     # Generate signals
-    print(f"\n🎯 Generating signals with BALANCED criteria...")
+    print(f"\n🎯 Generating signals with BREAKOUT-FOCUSED criteria...")
     print("   Criteria:")
+    print("   - BREAKOUT: Must break 20-bar high/low (NEW!)")
     print("   - Momentum: Top 30% (quantile 0.70)")
     print("   - ADX: > 20")
     print("   - Volume: > 1.2x average")

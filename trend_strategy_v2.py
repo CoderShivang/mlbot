@@ -125,17 +125,20 @@ class ResearchBackedTrendSignals:
         # ADX for trend strength
         adx = talib.ADX(df['high'], df['low'], df['close'], timeperiod=14)
 
-        # LONG signal criteria (BALANCED - quality over quantity)
-        # Philosophy: Signal on 5-10% of bars (selective but not too restrictive)
+        # LONG signal criteria (BREAKOUT-FOCUSED - highest quality only)
+        # Philosophy: Only enter on confirmed breakouts with strong momentum
+        # Based on ML feature importance: breakout_high is #1 predictor of success
         # Target: 50-60% win rate with 1.5:1 R:R
-        # Balance: Stricter than original (53% of bars) but looser than previous (0% of bars)
 
         # RSI for overbought/oversold filter
         rsi = talib.RSI(df['close'], timeperiod=14)
 
         long_signals = (
+            # CRITICAL: Must be breaking out of 20-bar high
+            # This is the #1 feature the ML model identifies as important!
+            is_breakout &
+
             # Good positive momentum (top 30% of rolling 100-bar momentum)
-            # Balance: More selective than 0.50 (top 50%), less strict than 0.80 (top 20%)
             (momentum_score > momentum_score.rolling(100).quantile(0.70)) &
 
             # Price above EMA9 (uptrend)
@@ -145,14 +148,13 @@ class ResearchBackedTrendSignals:
             (ema_9 > ema_21) &
 
             # Good volume confirmation (20% above average)
-            # Balance: More selective than 0.5, less strict than 1.5
+            # Breakouts need volume to be sustainable
             (volume_ratio > 1.2) &
 
             # Clear trend present (ADX > 20)
-            # Balance: More selective than 10, less strict than 25
             (adx > 20) &
 
-            # Bullish but not overbought (wider range than 55-75)
+            # Bullish but not overbought
             (rsi > 50) & (rsi < 80)
         )
 
@@ -184,17 +186,20 @@ class ResearchBackedTrendSignals:
         # ADX for trend strength
         adx = talib.ADX(df['high'], df['low'], df['close'], timeperiod=14)
 
-        # SHORT signal criteria (BALANCED - quality over quantity)
-        # Philosophy: Signal on 5-10% of bars (selective but not too restrictive)
+        # SHORT signal criteria (BREAKDOWN-FOCUSED - highest quality only)
+        # Philosophy: Only enter on confirmed breakdowns with strong momentum
+        # Based on ML feature importance: breakout_low is a top predictor of success
         # Target: 50-60% win rate with 1.5:1 R:R
-        # Balance: Stricter than original (53% of bars) but looser than previous (0% of bars)
 
         # RSI for overbought/oversold filter
         rsi = talib.RSI(df['close'], timeperiod=14)
 
         short_signals = (
+            # CRITICAL: Must be breaking down through 20-bar low
+            # This is a top feature the ML model identifies as important!
+            is_breakdown &
+
             # Good negative momentum (bottom 30% of rolling 100-bar momentum)
-            # Balance: More selective than 0.50 (bottom 50%), less strict than 0.20 (bottom 20%)
             (momentum_score < momentum_score.rolling(100).quantile(0.30)) &
 
             # Price below EMA9 (downtrend)
@@ -204,14 +209,13 @@ class ResearchBackedTrendSignals:
             (ema_9 < ema_21) &
 
             # Good volume confirmation (20% above average)
-            # Balance: More selective than 0.5, less strict than 1.5
+            # Breakdowns need volume to be sustainable
             (volume_ratio > 1.2) &
 
             # Clear trend present (ADX > 20)
-            # Balance: More selective than 10, less strict than 25
             (adx > 20) &
 
-            # Bearish but not oversold (wider range than 25-45)
+            # Bearish but not oversold
             (rsi < 50) & (rsi > 20)
         )
 

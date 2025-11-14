@@ -170,7 +170,7 @@ def train_model_with_progress(bot, df, forward_periods=10):
     # This fixes the overfitting problem by matching training to actual trading
     print_info("Generating training labels...")
     print(f"   └─ Simulating actual SL/TP outcomes (not just forward returns)")
-    print(f"   └─ SL: 1.5% | TP: 3.0% | Max hold: {forward_periods} bars")
+    print(f"   └─ SL: 1.5% | TP: 2.25% | Max hold: {forward_periods} bars")
 
     # Identify signals based on bot type
     if is_trend_bot:
