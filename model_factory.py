@@ -264,6 +264,38 @@ class EnhancedMLModel:
                 'success_probability': 0.5
             }
 
+    def predict_trade_quality(self, features: pd.Series) -> Dict:
+        """
+        Predict trade quality (compatibility method for existing bot)
+
+        This is a wrapper around predict_with_confidence() to maintain
+        compatibility with the existing MLMeanReversionBot interface.
+
+        Args:
+            features: Feature Series for current market state
+
+        Returns:
+            Dictionary with prediction results
+        """
+        return self.predict_with_confidence(features)
+
+    def find_similar_trades(self, current_features: pd.Series, n_similar: int = 5) -> list:
+        """
+        Find similar historical trades (compatibility stub)
+
+        Note: This is a simplified version for compatibility.
+        The enhanced model focuses on confidence-based filtering instead.
+
+        Args:
+            current_features: Current market features
+            n_similar: Number of similar trades to find
+
+        Returns:
+            Empty list (feature not implemented in enhanced model)
+        """
+        # Return empty list - enhanced model uses confidence scoring instead
+        return []
+
     def get_feature_importance(self, top_n: int = 15) -> pd.DataFrame:
         """
         Get feature importance
