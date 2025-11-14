@@ -33,6 +33,75 @@ app.title = "ML Mean Reversion Bot Dashboard"
 TRADES_DATA = None
 DAILY_DATA = None
 
+# Initialize Binance client for fetching candle data
+try:
+    binance_client = Client()  # Public API, no keys needed for historical data
+except Exception as e:
+    print(f"Warning: Could not initialize Binance client: {e}")
+    binance_client = None
+
+def fetch_candles_for_trade(symbol, timestamp, bars_before=50, bars_after=10, interval='15m'):
+    """
+    Fetch candlestick data around a trade entry point
+
+    Args:
+        symbol: Trading pair (e.g., 'BTCUSDT')
+        timestamp: Trade entry timestamp
+        bars_before: Number of candles before entry
+        bars_after: Number of candles after entry
+        interval: Candle interval (default: 15m)
+
+    Returns:
+        DataFrame with OHLCV data or None if fetch fails
+    """
+    if not binance_client:
+        return None
+
+    try:
+        # Parse timestamp
+        if isinstance(timestamp, str):
+            entry_time = pd.to_datetime(timestamp)
+        else:
+            entry_time = timestamp
+
+        # Calculate time range (approximate)
+        if interval == '15m':
+            time_per_candle = timedelta(minutes=15)
+        elif interval == '1h':
+            time_per_candle = timedelta(hours=1)
+        elif interval == '5m':
+            time_per_candle = timedelta(minutes=5)
+        else:
+            time_per_candle = timedelta(minutes=15)
+
+        start_time = entry_time - (bars_before * time_per_candle)
+        end_time = entry_time + (bars_after * time_per_candle)
+
+        # Fetch candles from Binance
+        klines = binance_client.get_historical_klines(
+            symbol,
+            interval,
+            start_str=start_time.strftime('%Y-%m-%d %H:%M:%S'),
+            end_str=end_time.strftime('%Y-%m-%d %H:%M:%S')
+        )
+
+        # Convert to DataFrame
+        df = pd.DataFrame(klines, columns=[
+            'timestamp', 'open', 'high', 'low', 'close', 'volume',
+            'close_time', 'quote_volume', 'trades', 'taker_buy_base',
+            'taker_buy_quote', 'ignore'
+        ])
+
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        for col in ['open', 'high', 'low', 'close', 'volume']:
+            df[col] = df[col].astype(float)
+
+        return df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
+
+    except Exception as e:
+        print(f"Error fetching candles: {e}")
+        return None
+
 def load_backtest_data():
     """Load backtest results - prioritize latest detailed results"""
     try:
@@ -974,17 +1043,99 @@ def show_trade_details(selected_rows, trades, outcome, direction, selected_date)
         ])
     ], className="mb-3")
 
-    # Note: Candlestick chart would require historical price data
-    # which isn't stored in trade_history.json
-    # You would need to fetch this from Binance or store it during backtest
+    # Fetch and render candlestick chart
+    chart_section = html.Div()
 
-    note = dbc.Alert([
-        html.Strong("ℹ️ Note: "),
-        "Candlestick charts require historical price data. ",
-        "This can be added by storing candle data during backtest or fetching from Binance API."
-    ], color="info")
+    if binance_client:
+        try:
+            # Fetch candles from Binance
+            candles_df = fetch_candles_for_trade(
+                symbol='BTCUSDT',  # TODO: Get from backtest params
+                timestamp=trade.get('timestamp'),
+                bars_before=50,
+                bars_after=10,
+                interval='15m'
+            )
 
-    return html.Div([details_card, note])
+            if candles_df is not None and len(candles_df) > 0:
+                # Create candlestick chart
+                fig = go.Figure()
+
+                # Add candlestick
+                fig.add_trace(go.Candlestick(
+                    x=candles_df['timestamp'],
+                    open=candles_df['open'],
+                    high=candles_df['high'],
+                    low=candles_df['low'],
+                    close=candles_df['close'],
+                    name='Price',
+                    increasing_line_color='#26a69a',
+                    decreasing_line_color='#ef5350'
+                ))
+
+                # Mark entry point
+                entry_time = pd.to_datetime(trade.get('timestamp'))
+                entry_price = trade['entry_price']
+
+                fig.add_trace(go.Scatter(
+                    x=[entry_time],
+                    y=[entry_price],
+                    mode='markers',
+                    marker=dict(
+                        size=15,
+                        color='blue' if trade['direction'] == 'LONG' else 'red',
+                        symbol='triangle-up' if trade['direction'] == 'LONG' else 'triangle-down',
+                        line=dict(width=2, color='white')
+                    ),
+                    name=f"Entry ({trade['direction']})",
+                    showlegend=True
+                ))
+
+                # Mark exit point (approximate - same timestamp + a few candles)
+                exit_price = trade.get('exit_price', 0)
+                if exit_price > 0:
+                    # Estimate exit time (after entry)
+                    exit_idx = min(len(candles_df) - 1, 50 + 5)  # ~5 candles after entry
+                    exit_time = candles_df.iloc[exit_idx]['timestamp']
+
+                    fig.add_trace(go.Scatter(
+                        x=[exit_time],
+                        y=[exit_price],
+                        mode='markers',
+                        marker=dict(
+                            size=15,
+                            color='green' if trade.get('pnl_percent', trade.get('pnl_pct', 0)) > 0 else 'red',
+                            symbol='x',
+                            line=dict(width=2, color='white')
+                        ),
+                        name=f"Exit ({'WIN' if trade.get('pnl_percent', trade.get('pnl_pct', 0)) > 0 else 'LOSS'})",
+                        showlegend=True
+                    ))
+
+                fig.update_layout(
+                    title=f"Trade Chart - {trade['direction']} @ ${entry_price:,.2f}",
+                    xaxis_title="Time",
+                    yaxis_title="Price (USDT)",
+                    height=500,
+                    xaxis_rangeslider_visible=False,
+                    hovermode='x unified',
+                    template='plotly_white'
+                )
+
+                chart_section = dcc.Graph(figure=fig)
+            else:
+                chart_section = dbc.Alert("Could not fetch candle data from Binance", color="warning")
+
+        except Exception as e:
+            chart_section = dbc.Alert(f"Error loading chart: {str(e)}", color="warning")
+    else:
+        chart_section = dbc.Alert([
+            html.Strong("ℹ️ Note: "),
+            "Candlestick charts require Binance API connection. ",
+            "Charts are not available in offline mode."
+        ], color="info")
+
+    return html.Div([details_card, html.Hr(), chart_section])
 
 if __name__ == '__main__':
     print("="*80)
