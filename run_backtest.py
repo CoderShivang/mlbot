@@ -184,12 +184,16 @@ def train_model_with_progress(bot, df, forward_periods=10):
         print_warning("Few training samples - model may not be reliable")
         print("   Consider using more historical data (--days 90)")
 
+    # Get model info
+    model_type = bot.ml_model.model_type if hasattr(bot.ml_model, 'model_type') else 'gradientboost'
+    model_info = ModelFactory.get_model_info(model_type)
+
     # Train model
-    print_info("Training Gradient Boosting Classifier...")
-    print(f"   └─ Model: GradientBoostingClassifier")
-    print(f"   └─ Estimators: 200")
-    print(f"   └─ Learning Rate: 0.05")
-    print(f"   └─ Max Depth: 5")
+    print_info(f"Training {model_info['name']}...")
+    print(f"   └─ Model: {model_info['name']}")
+    print(f"   └─ Speed: {model_info['speed']}")
+    print(f"   └─ Accuracy: {model_info['accuracy']}")
+    print(f"   └─ Overfitting Risk: {model_info['overfitting_risk']}")
 
     # Get feature list
     feature_cols = FeatureEngineering.get_feature_list()
@@ -215,20 +219,13 @@ def train_model_with_progress(bot, df, forward_periods=10):
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
 
-    # Train with progress
-    from sklearn.ensemble import GradientBoostingClassifier
+    # Create model using factory (respects --model flag)
     from sklearn.metrics import classification_report, accuracy_score
 
     print("\n   Training in progress...")
 
-    # We'll show progress by monitoring estimators (boosting rounds)
-    model = GradientBoostingClassifier(
-        n_estimators=200,
-        learning_rate=0.05,
-        max_depth=5,
-        random_state=42,
-        verbose=0  # We'll handle our own progress
-    )
+    # Create the correct model type
+    model = ModelFactory.create_model(model_type)
 
     # Unfortunately sklearn's GBClassifier doesn't have incremental training
     # But we can show a spinner
@@ -272,15 +269,20 @@ def train_model_with_progress(bot, df, forward_periods=10):
     else:
         print_warning("Model shows weak predictive power - consider more data")
 
-    # Feature importance (top 5)
-    print_info("Top 5 Most Important Features:")
-    importances = model.feature_importances_
-    feature_importance = sorted(zip(feature_cols, importances), key=lambda x: x[1], reverse=True)
+    # Feature importance (top 5) - only for models that support it
+    if hasattr(model, 'feature_importances_'):
+        print_info("Top 5 Most Important Features:")
+        importances = model.feature_importances_
+        feature_importance = sorted(zip(feature_cols, importances), key=lambda x: x[1], reverse=True)
 
-    for i, (feature, importance) in enumerate(feature_importance[:5], 1):
-        bar_length = int(importance * 30)
-        bar = '█' * bar_length + '░' * (30 - bar_length)
-        print(f"   {i}. {feature:25s} {bar} {importance:.3f}")
+        for i, (feature, importance) in enumerate(feature_importance[:5], 1):
+            bar_length = int(importance * 30)
+            bar = '█' * bar_length + '░' * (30 - bar_length)
+            print(f"   {i}. {feature:25s} {bar} {importance:.3f}")
+    elif hasattr(model, 'estimators_'):
+        print_info("Ensemble model - feature importance averaged across estimators")
+    else:
+        print_info("Feature importance not available for this model type")
 
     # Update bot's ML model
     bot.ml_model.model = model

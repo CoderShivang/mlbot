@@ -296,6 +296,19 @@ class EnhancedMLModel:
         # Return empty list - enhanced model uses confidence scoring instead
         return []
 
+    def add_trade_outcome(self, trade_setup) -> None:
+        """
+        Add trade outcome for learning (compatibility stub)
+
+        The enhanced model is trained once per window in walk-forward analysis
+        and doesn't use online learning. This is a no-op for compatibility.
+
+        Args:
+            trade_setup: TradeSetup object with outcome
+        """
+        # No-op: Enhanced model doesn't use online learning
+        pass
+
     def get_feature_importance(self, top_n: int = 15) -> pd.DataFrame:
         """
         Get feature importance
