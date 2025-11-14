@@ -51,16 +51,17 @@ class LiveTradingBot:
             print("⚠️  No trained model found. Train a model first using example_usage.py")
             raise
         
-        # Trading parameters - CONFIGURED FOR $100 @ 20x LEVERAGE
+        # Trading parameters - CONSERVATIVE SETTINGS FOR $100 @ 10x LEVERAGE
         self.symbol = 'BTCUSDT'
         self.interval = '15m'  # 15-minute candles
-        self.leverage = 20
+        self.leverage = 10  # REDUCED from 20x for safety (10% BTC move = liquidation vs 5%)
         self.capital = 100  # Starting capital in USDT
-        self.risk_per_trade = 0.15  # Risk 15% of capital per trade
-        self.stop_loss_pct = 0.008  # 0.8% stop loss (16% of capital with 20x)
-        self.take_profit_pct = 0.012  # 1.2% take profit (24% of capital with 20x)
+        self.risk_per_trade = 0.05  # Risk 5% per trade (REDUCED from 15%)
+        self.stop_loss_pct = 0.015  # 1.5% stop loss = 15% of capital with 10x (WIDENED from 0.8%)
+        self.take_profit_pct = 0.03  # 3% take profit = 30% of capital with 10x (INCREASED from 1.2%)
         self.max_positions = 1  # Max concurrent positions
         self.use_limit_orders = True  # Use limit orders for better fees (0.02% vs 0.05%)
+        self.use_trailing_stop = True  # Enable trailing stop to breakeven at 60% of TP
         
         # Fee structure
         self.maker_fee = 0.0002  # 0.02% for limit orders
@@ -459,8 +460,11 @@ class LiveTradingBot:
         print("="*80)
         
         print("\n🔴 LIVE TRADING MODE - Using real money!")
-        print("⚠️  With 20x leverage, a 5% BTC move = 100% capital impact")
+        print("⚠️  With 10x leverage, a 10% BTC move = 100% capital impact")
+        print("⚠️  Conservative settings but still HIGH RISK")
         print("⚠️  Monitor closely and be prepared for volatility")
+        print(f"⚠️  Trailing stop enabled: moves to breakeven at 60% of TP")
+        print(f"⚠️  Reward:Risk ratio: {self.take_profit_pct/self.stop_loss_pct:.1f}:1")
         
         response = input("\nAre you sure you want to continue? (type 'YES' to confirm): ")
         if response != 'YES':
@@ -518,46 +522,70 @@ class LiveTradingBot:
 
 def main():
     """Main entry point"""
-    
-    # Configuration
+
+    import os
+
+    # Load configuration from config.json
+    config_path = 'config.json'
+
+    if not os.path.exists(config_path):
+        print("❌ Error: config.json not found")
+        print("\nPlease create config.json with your API credentials")
+        print("See config_template.json for the required format")
+        return
+
+    with open(config_path, 'r') as f:
+        config = json.load(f)
+
     CONFIG = {
-        'api_key': 'YOUR_BINANCE_API_KEY',
-        'api_secret': 'YOUR_BINANCE_API_SECRET',
-        'model_path': 'ml_mean_reversion_model.pkl',
+        'api_key': config['api_key'],
+        'api_secret': config['api_secret'],
+        'model_path': '/mnt/user-data/outputs/ml_mean_reversion_model.pkl',
         'check_interval': 60  # Check every 60 seconds
     }
-    
+
     # Validate config
-    if CONFIG['api_key'] == 'YOUR_BINANCE_API_KEY':
-        print("❌ Error: Please set your Binance API credentials in the script")
+    if not CONFIG['api_key'] or CONFIG['api_key'] == 'YOUR_BINANCE_API_KEY':
+        print("❌ Error: Please set your Binance API credentials in config.json")
         print("\nTo get API keys:")
         print("1. Log into Binance")
         print("2. Go to API Management")
         print("3. Create a new API key")
         print("4. Enable 'Futures' trading permission")
-        print("5. Add your keys to this script")
+        print("5. Add your keys to config.json")
         print("\n⚠️  IMPORTANT:")
         print("   • Do NOT enable 'Withdraw' permission")
         print("   • Consider IP whitelist for security")
         print("   • Start with minimum capital ($100)")
+        print("   • NEVER commit config.json to git (contains sensitive keys)")
         return
-    
+
     # Check if model exists
-    import os
     if not os.path.exists(CONFIG['model_path']):
         print("❌ Error: Trained model not found")
         print(f"\nPlease train a model first using example_usage.py")
         print(f"Expected model path: {CONFIG['model_path']}")
         return
-    
+
     # Initialize and run bot
-    print("Initializing live trading bot...")
-    print("Configuration:")
+    print("\n" + "="*80)
+    print("INITIALIZING LIVE TRADING BOT - CONSERVATIVE SETTINGS")
+    print("="*80)
+    print("\n✅ Configuration:")
     print(f"  • Capital: $100")
-    print(f"  • Leverage: 20x")
+    print(f"  • Leverage: 10x (reduced from 20x for safety)")
+    print(f"  • Risk per trade: 5% (reduced from 15%)")
     print(f"  • Order Type: LIMIT (0.02% fee)")
-    print(f"  • Stop Loss: 0.8% (16% of capital)")
-    print(f"  • Take Profit: 1.2% (24% of capital)\n")
+    print(f"  • Stop Loss: 1.5% = 15% of capital")
+    print(f"  • Take Profit: 3% = 30% of capital")
+    print(f"  • Reward:Risk: 2:1 (improved from 1.5:1)")
+    print(f"  • Trailing Stop: Enabled")
+    print("\n⚠️  RISK WARNING:")
+    print("  • With 10x leverage, a 10% BTC move = 100% capital impact")
+    print("  • You can lose your entire $100 investment")
+    print("  • Monitor the bot closely (check every 2-4 hours)")
+    print("  • Have an emergency exit plan")
+    print("="*80 + "\n")
     
     try:
         bot = LiveTradingBot(
