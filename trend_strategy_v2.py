@@ -125,34 +125,35 @@ class ResearchBackedTrendSignals:
         # ADX for trend strength
         adx = talib.ADX(df['high'], df['low'], df['close'], timeperiod=14)
 
-        # LONG signal criteria (HIGHLY SELECTIVE - quality over quantity)
-        # Philosophy: Signal on <5% of bars (top quality setups only)
+        # LONG signal criteria (BALANCED - quality over quantity)
+        # Philosophy: Signal on 5-10% of bars (selective but not too restrictive)
         # Target: 50-60% win rate with 1.5:1 R:R
+        # Balance: Stricter than original (53% of bars) but looser than previous (0% of bars)
 
         # RSI for overbought/oversold filter
         rsi = talib.RSI(df['close'], timeperiod=14)
 
         long_signals = (
-            # Strong positive momentum (top 20% of rolling 100-bar momentum, NOT top 50%)
-            (momentum_score > momentum_score.rolling(100).quantile(0.80)) &
+            # Good positive momentum (top 30% of rolling 100-bar momentum)
+            # Balance: More selective than 0.50 (top 50%), less strict than 0.80 (top 20%)
+            (momentum_score > momentum_score.rolling(100).quantile(0.70)) &
 
-            # Price significantly above EMA9 (0.5% buffer to ensure uptrend strength)
-            (df['close'] > ema_9 * 1.005) &
+            # Price above EMA9 (uptrend)
+            (df['close'] > ema_9) &
 
-            # Price above EMA21 for higher timeframe confirmation
-            (df['close'] > ema_21) &
+            # EMA alignment (9 > 21 = bullish structure)
+            (ema_9 > ema_21) &
 
-            # Strong EMA alignment (EMA9 at least 0.3% above EMA21)
-            (ema_9 > ema_21 * 1.003) &
+            # Good volume confirmation (20% above average)
+            # Balance: More selective than 0.5, less strict than 1.5
+            (volume_ratio > 1.2) &
 
-            # Strong volume confirmation (50% above average, NOT 50% below)
-            (volume_ratio > 1.5) &
+            # Clear trend present (ADX > 20)
+            # Balance: More selective than 10, less strict than 25
+            (adx > 20) &
 
-            # Strong trend present (ADX > 25, NOT > 10)
-            (adx > 25) &
-
-            # Bullish but not overbought
-            (rsi > 55) & (rsi < 75)
+            # Bullish but not overbought (wider range than 55-75)
+            (rsi > 50) & (rsi < 80)
         )
 
         return long_signals
@@ -183,34 +184,35 @@ class ResearchBackedTrendSignals:
         # ADX for trend strength
         adx = talib.ADX(df['high'], df['low'], df['close'], timeperiod=14)
 
-        # SHORT signal criteria (HIGHLY SELECTIVE - quality over quantity)
-        # Philosophy: Signal on <5% of bars (top quality setups only)
+        # SHORT signal criteria (BALANCED - quality over quantity)
+        # Philosophy: Signal on 5-10% of bars (selective but not too restrictive)
         # Target: 50-60% win rate with 1.5:1 R:R
+        # Balance: Stricter than original (53% of bars) but looser than previous (0% of bars)
 
         # RSI for overbought/oversold filter
         rsi = talib.RSI(df['close'], timeperiod=14)
 
         short_signals = (
-            # Strong negative momentum (bottom 20% of rolling 100-bar momentum, NOT bottom 50%)
-            (momentum_score < momentum_score.rolling(100).quantile(0.20)) &
+            # Good negative momentum (bottom 30% of rolling 100-bar momentum)
+            # Balance: More selective than 0.50 (bottom 50%), less strict than 0.20 (bottom 20%)
+            (momentum_score < momentum_score.rolling(100).quantile(0.30)) &
 
-            # Price significantly below EMA9 (0.5% buffer to ensure downtrend strength)
-            (df['close'] < ema_9 * 0.995) &
+            # Price below EMA9 (downtrend)
+            (df['close'] < ema_9) &
 
-            # Price below EMA21 for higher timeframe confirmation
-            (df['close'] < ema_21) &
+            # EMA alignment (9 < 21 = bearish structure)
+            (ema_9 < ema_21) &
 
-            # Strong EMA alignment (EMA9 at least 0.3% below EMA21)
-            (ema_9 < ema_21 * 0.997) &
+            # Good volume confirmation (20% above average)
+            # Balance: More selective than 0.5, less strict than 1.5
+            (volume_ratio > 1.2) &
 
-            # Strong volume confirmation (50% above average, NOT 50% below)
-            (volume_ratio > 1.5) &
+            # Clear trend present (ADX > 20)
+            # Balance: More selective than 10, less strict than 25
+            (adx > 20) &
 
-            # Strong trend present (ADX > 25, NOT > 10)
-            (adx > 25) &
-
-            # Bearish but not oversold
-            (rsi < 45) & (rsi > 25)
+            # Bearish but not oversold (wider range than 25-45)
+            (rsi < 50) & (rsi > 20)
         )
 
         return short_signals
