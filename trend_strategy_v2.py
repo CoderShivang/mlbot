@@ -125,25 +125,34 @@ class ResearchBackedTrendSignals:
         # ADX for trend strength
         adx = talib.ADX(df['high'], df['low'], df['close'], timeperiod=14)
 
-        # LONG signal criteria (ULTRA SIMPLE - let ML and risk management do the work)
-        # Philosophy: Generate signals liberally, filter with ML and manage with stops
+        # LONG signal criteria (HIGHLY SELECTIVE - quality over quantity)
+        # Philosophy: Signal on <5% of bars (top quality setups only)
+        # Target: 50-60% win rate with 1.5:1 R:R
+
+        # RSI for overbought/oversold filter
+        rsi = talib.RSI(df['close'], timeperiod=14)
+
         long_signals = (
-            # Positive momentum (top 50% of rolling 100-bar momentum)
-            (momentum_score > momentum_score.rolling(100).quantile(0.50)) &
+            # Strong positive momentum (top 20% of rolling 100-bar momentum, NOT top 50%)
+            (momentum_score > momentum_score.rolling(100).quantile(0.80)) &
 
-            # Price above EMA9 (basic uptrend)
-            (df['close'] > ema_9) &
+            # Price significantly above EMA9 (0.5% buffer to ensure uptrend strength)
+            (df['close'] > ema_9 * 1.005) &
 
-            # EMA alignment (9 > 21 = bullish structure)
-            (ema_9 > ema_21) &
+            # Price above EMA21 for higher timeframe confirmation
+            (df['close'] > ema_21) &
 
-            # Some volume activity (very permissive at 0.5)
-            (volume_ratio > 0.5) &
+            # Strong EMA alignment (EMA9 at least 0.3% above EMA21)
+            (ema_9 > ema_21 * 1.003) &
 
-            # Any trend present (ADX > 10, extremely permissive)
-            (adx > 10)
+            # Strong volume confirmation (50% above average, NOT 50% below)
+            (volume_ratio > 1.5) &
 
-            # REMOVED: RSI filter (let ML model handle overbought/oversold)
+            # Strong trend present (ADX > 25, NOT > 10)
+            (adx > 25) &
+
+            # Bullish but not overbought
+            (rsi > 55) & (rsi < 75)
         )
 
         return long_signals
@@ -174,25 +183,34 @@ class ResearchBackedTrendSignals:
         # ADX for trend strength
         adx = talib.ADX(df['high'], df['low'], df['close'], timeperiod=14)
 
-        # SHORT signal criteria (ULTRA SIMPLE - let ML and risk management do the work)
-        # Philosophy: Generate signals liberally, filter with ML and manage with stops
+        # SHORT signal criteria (HIGHLY SELECTIVE - quality over quantity)
+        # Philosophy: Signal on <5% of bars (top quality setups only)
+        # Target: 50-60% win rate with 1.5:1 R:R
+
+        # RSI for overbought/oversold filter
+        rsi = talib.RSI(df['close'], timeperiod=14)
+
         short_signals = (
-            # Negative momentum (bottom 50% of rolling 100-bar momentum)
-            (momentum_score < momentum_score.rolling(100).quantile(0.50)) &
+            # Strong negative momentum (bottom 20% of rolling 100-bar momentum, NOT bottom 50%)
+            (momentum_score < momentum_score.rolling(100).quantile(0.20)) &
 
-            # Price below EMA9 (basic downtrend)
-            (df['close'] < ema_9) &
+            # Price significantly below EMA9 (0.5% buffer to ensure downtrend strength)
+            (df['close'] < ema_9 * 0.995) &
 
-            # EMA alignment (9 < 21 = bearish structure)
-            (ema_9 < ema_21) &
+            # Price below EMA21 for higher timeframe confirmation
+            (df['close'] < ema_21) &
 
-            # Some volume activity (very permissive at 0.5)
-            (volume_ratio > 0.5) &
+            # Strong EMA alignment (EMA9 at least 0.3% below EMA21)
+            (ema_9 < ema_21 * 0.997) &
 
-            # Any trend present (ADX > 10, extremely permissive)
-            (adx > 10)
+            # Strong volume confirmation (50% above average, NOT 50% below)
+            (volume_ratio > 1.5) &
 
-            # REMOVED: RSI filter (let ML model handle overbought/oversold)
+            # Strong trend present (ADX > 25, NOT > 10)
+            (adx > 25) &
+
+            # Bearish but not oversold
+            (rsi < 45) & (rsi > 25)
         )
 
         return short_signals
@@ -433,7 +451,7 @@ class ResearchBackedTrendBot:
 
     def backtest(self, df: pd.DataFrame, initial_capital: float = 100,
                 leverage: int = 10, risk_per_trade: float = 0.05,
-                stop_loss_pct: float = 0.015, take_profit_pct: float = 0.03,
+                stop_loss_pct: float = 0.015, take_profit_pct: float = 0.0225,
                 use_limit_orders: bool = True, use_trailing_stop: bool = True) -> Dict:
         """
         Backtest the research-backed trend following strategy

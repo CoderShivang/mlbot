@@ -187,8 +187,8 @@ def train_model_with_progress(bot, df, forward_periods=10):
 
     # Simulate actual trade outcomes with SL/TP (CRITICAL FIX)
     df_features['success'] = 0
-    sl_pct = 0.015  # 1.5% stop loss
-    tp_pct = 0.03   # 3% take profit
+    sl_pct = 0.015   # 1.5% stop loss
+    tp_pct = 0.0225  # 2.25% take profit (1.5:1 R:R)
 
     print(f"   └─ Simulating {df_features['is_setup'].sum():,} trade outcomes...")
 
@@ -277,9 +277,9 @@ def train_model_with_progress(bot, df, forward_periods=10):
     # (feature_cols already set above based on bot type)
     feature_cols = [col for col in feature_cols if col in df_features.columns]
 
-    # Prepare training data
+    # Prepare training data (using 'success' not 'forward_return')
     train_data = df_features[df_features['is_setup']].copy()
-    train_data = train_data.dropna(subset=['forward_return'] + feature_cols)
+    train_data = train_data.dropna(subset=['success'] + feature_cols)
 
     X = train_data[feature_cols]
     y = train_data['success']
@@ -967,8 +967,8 @@ Notes:
                        help='Risk per trade as decimal (default: 0.05 = 5%%)')
     parser.add_argument('--stop-loss', type=float, default=0.015,
                        help='Stop loss %% (default: 0.015 = 1.5%%)')
-    parser.add_argument('--take-profit', type=float, default=0.03,
-                       help='Take profit %% (default: 0.03 = 3%%)')
+    parser.add_argument('--take-profit', type=float, default=0.0225,
+                       help='Take profit %% (default: 0.0225 = 2.25%%, giving 1.5:1 R:R)')
 
     # Order options
     parser.add_argument('--use-market', action='store_true',
