@@ -35,6 +35,11 @@ from binance.client import Client
 sys.path.insert(0, str(Path(__file__).parent))
 
 from ml_mean_reversion_bot import MLMeanReversionBot
+from trend_following_strategy import ExtremeTrendFollowingBot
+from combined_strategy import CombinedStrategyBot
+from enhanced_features import EnhancedFeatureEngineering
+from dynamic_risk_management import DynamicRiskManager
+from model_factory import ModelFactory
 
 # ANSI color codes for pretty output
 class Colors:
@@ -686,6 +691,90 @@ def save_detailed_results(results: dict, bot, output_path: Path, args):
         json.dump(summary, f, indent=2, default=str)
 
 
+def initialize_bot_for_strategy(strategy: str, model_type: str, min_confidence: float):
+    """
+    Initialize the appropriate bot based on strategy choice
+
+    Args:
+        strategy: 'meanrev', 'extremetrends', or 'combined'
+        model_type: ML model type
+        min_confidence: Minimum confidence threshold
+
+    Returns:
+        Initialized bot instance
+    """
+    print_info(f"Strategy: {Colors.CYAN}{strategy.upper()}{Colors.ENDC}")
+    print_info(f"ML Model: {Colors.CYAN}{model_type.upper()}{Colors.ENDC}")
+    print_info(f"Min Confidence: {Colors.CYAN}{min_confidence:.0%}{Colors.ENDC}")
+
+    if strategy == 'meanrev':
+        print_info("Initializing Mean Reversion Bot...")
+        bot = MLMeanReversionBot()
+        bot.ml_model.model_type = model_type
+        bot.ml_model.min_confidence = min_confidence
+        # Replace model with enhanced version
+        from model_factory import EnhancedMLModel
+        bot.ml_model = EnhancedMLModel(model_type, min_confidence)
+        bot.ml_model.feature_names = bot.feature_engineer.get_feature_list()
+        return bot
+
+    elif strategy == 'extremetrends':
+        print_info("Initializing Extreme Trend Following Bot...")
+        bot = ExtremeTrendFollowingBot(model_type, min_confidence)
+        return bot
+
+    elif strategy == 'combined':
+        print_info("Initializing Combined Strategy Bot...")
+        # Initialize both sub-bots
+        meanrev_bot = MLMeanReversionBot()
+        from model_factory import EnhancedMLModel
+        meanrev_bot.ml_model = EnhancedMLModel(model_type, min_confidence)
+        meanrev_bot.ml_model.feature_names = meanrev_bot.feature_engineer.get_feature_list()
+
+        trend_bot = ExtremeTrendFollowingBot(model_type, min_confidence)
+
+        # Create combined bot
+        bot = CombinedStrategyBot(meanrev_bot, trend_bot, min_confidence)
+        return bot
+
+    else:
+        raise ValueError(f"Unknown strategy: {strategy}")
+
+
+def enhance_features_for_strategy(df: pd.DataFrame, strategy: str, interval: str = '15m') -> pd.DataFrame:
+    """
+    Add enhanced features based on strategy
+
+    Args:
+        df: Base OHLCV DataFrame
+        strategy: Strategy type
+        interval: Candle interval
+
+    Returns:
+        DataFrame with enhanced features
+    """
+    print_info("Calculating enhanced features...")
+
+    # Add market regime detection (ALL strategies need this)
+    df = EnhancedFeatureEngineering.detect_market_regime(df)
+
+    # Add multi-timeframe features
+    df = EnhancedFeatureEngineering.add_multi_timeframe_features(df, interval)
+
+    # Add temporal features
+    df = EnhancedFeatureEngineering.add_temporal_features(df)
+
+    # Add advanced patterns
+    df = EnhancedFeatureEngineering.add_advanced_patterns(df)
+
+    # Add volatility percentile
+    df = EnhancedFeatureEngineering.add_volatility_percentile(df)
+
+    print_success("Enhanced features calculated")
+
+    return df
+
+
 def main():
     """Main CLI function"""
     parser = argparse.ArgumentParser(
@@ -751,11 +840,32 @@ Notes:
     parser.add_argument('--no-trailing', action='store_true',
                        help='Disable trailing stop')
 
+    # Strategy selection (NEW!)
+    parser.add_argument('--strat', '--strategy', type=str, default='meanrev',
+                       choices=['meanrev', 'extremetrends', 'combined'],
+                       help='''Strategy to use:
+  meanrev       = Mean reversion (buy dips, sell rips)
+  extremetrends = Trend following (ride strong moves)
+  combined      = Both (regime-adaptive)
+Default: meanrev''')
+
+    # ML Model selection (NEW!)
+    parser.add_argument('--model', type=str, default='gradientboost',
+                       choices=['gradientboost', 'randomforest', 'xgboost', 'ensemble'],
+                       help='''ML model type:
+  gradientboost = Default, fast, good performance
+  randomforest  = More robust, less overfitting
+  xgboost       = Best performance (requires: pip install xgboost)
+  ensemble      = Combines all models (slowest, most accurate)
+Default: gradientboost''')
+
     # ML options
     parser.add_argument('--no-train', action='store_true',
                        help='Skip ML training (use existing model)')
     parser.add_argument('--forward-periods', type=int, default=10,
                        help='Forward periods for ML labels (default: 10)')
+    parser.add_argument('--min-confidence', type=float, default=0.65,
+                       help='Minimum ML confidence to take trades (default: 0.65 = 65%%)')
 
     # Walk-forward analysis options
     parser.add_argument('--walk-forward', action='store_true',
@@ -799,15 +909,19 @@ Notes:
             sys.exit(1)
 
     # Print header
-    print_header("ML MEAN REVERSION BOT - BACKTEST")
+    strategy_names = {
+        'meanrev': 'MEAN REVERSION',
+        'extremetrends': 'EXTREME TREND FOLLOWING',
+        'combined': 'COMBINED STRATEGY'
+    }
+    print_header(f"{strategy_names.get(args.strat, 'TRADING')} BOT - BACKTEST")
 
     print_info(f"Symbol: {args.symbol}")
     print_info(f"Period: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')} ({(end_date - start_date).days} days)")
     print_info(f"Interval: {args.interval}")
 
-    # Initialize bot
-    print_info("Initializing bot...")
-    bot = MLMeanReversionBot()
+    # Initialize bot based on strategy choice
+    bot = initialize_bot_for_strategy(args.strat, args.model, args.min_confidence)
     print_success("Bot initialized")
 
     # Fetch data
@@ -817,27 +931,46 @@ Notes:
         print_error(f"Failed to fetch data: {e}")
         sys.exit(1)
 
+    # Add enhanced features (ALL strategies need this)
+    try:
+        df = enhance_features_for_strategy(df, args.strat, args.interval)
+    except Exception as e:
+        print_error(f"Feature calculation failed: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
     # Run backtest (walk-forward or standard)
     try:
         if args.walk_forward:
             # Walk-forward analysis (proper backtesting)
+            print_info(f"Using walk-forward analysis (train on past, test on future)")
             results = walk_forward_backtest(bot, df, args)
         else:
             # Standard backtest (has look-ahead bias)
             if not args.no_train:
-                try:
-                    df = train_model_with_progress(bot, df, args.forward_periods)
-                except Exception as e:
-                    print_error(f"Training failed: {e}")
-                    sys.exit(1)
+                print_header("ML MODEL TRAINING")
+
+                # Train based on strategy type
+                if args.strat == 'combined':
+                    bot.train_models(df, args.forward_periods)
+                else:
+                    # Calculate base features first
+                    from ml_mean_reversion_bot import FeatureEngineering
+                    df = FeatureEngineering.calculate_features(df)
+
+                    # Train the specific bot
+                    bot.train_model(df, args.forward_periods)
+
+                print_success("Model training complete")
             else:
                 print_warning("Skipping ML training - using existing model (if available)")
 
-                # Still need to calculate features
-                print_info("Calculating features for backtest...")
+                # Still need to calculate base features
+                print_info("Calculating base features for backtest...")
                 from ml_mean_reversion_bot import FeatureEngineering
                 df = FeatureEngineering.calculate_features(df)
-                print_success("Features calculated")
+                print_success("Base features calculated")
 
             results = run_backtest_with_progress(bot, df, argparse.Namespace(
                 capital=args.capital,
@@ -849,10 +982,9 @@ Notes:
                 trailing_stop=not args.no_trailing
             ))
 
-            if not args.walk_forward:
-                print_warning("⚠️  Standard backtest has LOOK-AHEAD BIAS")
-                print("   The model was trained on the same data it's being tested on.")
-                print(f"   For realistic results, use: {Colors.CYAN}--walk-forward{Colors.ENDC}")
+            print_warning("⚠️  Standard backtest has LOOK-AHEAD BIAS")
+            print("   The model was trained on the same data it's being tested on.")
+            print(f"   For realistic results, use: {Colors.CYAN}--walk-forward{Colors.ENDC}")
 
     except Exception as e:
         print_error(f"Backtest failed: {e}")
@@ -889,9 +1021,9 @@ Notes:
         else:
             period = f"{args.start.replace('/', '')}_to_{args.end.replace('/', '')}"
 
-        # Format: backtest_365days_14Nov_16-24_standard.json
+        # Format: backtest_365days_meanrev_xgboost_14Nov_16-24_walkforward.json
         timestamp_str = now.strftime("%d%b_%H-%M")
-        archive_filename = f"backtest_{period}_{timestamp_str}_{backtest_type}.json"
+        archive_filename = f"backtest_{period}_{args.strat}_{args.model}_{timestamp_str}_{backtest_type}.json"
 
         # Save model (overwrites with latest)
         model_path = output_dir / 'ml_mean_reversion_model.pkl'
