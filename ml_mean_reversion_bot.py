@@ -103,9 +103,10 @@ class FeatureEngineering:
         data['bb_position'] = (data['close'] - data['bb_lower']) / (data['bb_upper'] - data['bb_lower'])
         data['bb_width'] = (data['bb_upper'] - data['bb_lower']) / data['bb_middle']
         
-        # Z-Score of price
+        # Z-Score of price (multiple timeframes for confirmation)
         data['returns'] = data['close'].pct_change()
         data['zscore'] = (data['close'] - data['close'].rolling(20).mean()) / data['close'].rolling(20).std()
+        data['zscore_50'] = (data['close'] - data['close'].rolling(50).mean()) / data['close'].rolling(50).std()
         
         # === MARKET CONTEXT ===
         
@@ -167,7 +168,13 @@ class FeatureEngineering:
         data['doji'] = talib.CDLDOJI(data['open'], data['high'], data['low'], data['close'])
         data['hammer'] = talib.CDLHAMMER(data['open'], data['high'], data['low'], data['close'])
         data['engulfing'] = talib.CDLENGULFING(data['open'], data['high'], data['low'], data['close'])
-        
+
+        # === FEATURE INTERACTIONS ===
+        # Combine features that might have predictive power when interacting
+        data['rsi_bb_interaction'] = data['rsi'] * data['bb_position']
+        data['trend_volatility_interaction'] = data['trend_strength'] * data['volatility']
+        data['volume_momentum_interaction'] = data['volume_ratio'] * data['momentum']
+
         return data
     
     @staticmethod
@@ -175,57 +182,120 @@ class FeatureEngineering:
         """Return list of features to use in ML model"""
         return [
             # Mean reversion
-            'rsi', 'bb_position', 'bb_width', 'zscore',
-            
+            'rsi', 'bb_position', 'bb_width', 'zscore', 'zscore_50',
+
             # Market context
             'volatility', 'atr', 'adx', 'trend_strength', 'volume_ratio', 'mfi',
-            
+
             # Momentum
             'momentum', 'roc',
-            
+
             # Pattern features
             'distance_to_high', 'distance_to_low', 'is_consolidating', 'drawdown',
-            
+
             # Candle patterns
-            'doji', 'hammer', 'engulfing'
+            'doji', 'hammer', 'engulfing',
+
+            # Feature interactions
+            'rsi_bb_interaction', 'trend_volatility_interaction', 'volume_momentum_interaction'
         ]
 
 
 class MeanReversionSignals:
-    """Generate traditional mean reversion signals"""
-    
+    """Generate enhanced mean reversion signals with adaptive thresholds"""
+
     @staticmethod
     def identify_long_setups(df: pd.DataFrame) -> pd.Series:
         """
-        Identify potential LONG mean reversion setups
-        
+        Enhanced LONG mean reversion setup identification
+
+        Improvements:
+        1. Adaptive RSI thresholds based on volatility regime
+        2. Volume confirmation (above-average volume)
+        3. Trend filter (don't buy in strong downtrends)
+        4. Multiple timeframe Z-score confirmation
+
         Criteria:
-        - RSI < 30 (oversold)
+        - RSI < threshold (adaptive: 25-35 based on volatility)
         - Price near lower Bollinger Band
-        - Z-score < -2 (price significantly below mean)
+        - Z-score < threshold (adaptive: -1.5 to -2.0 based on trend)
+        - Above-average volume (confirmation)
+        - Not in strong downtrend (trend strength > -0.5)
+        - Longer timeframe also showing oversold (zscore_50 < -1.0)
         """
+        # Adaptive RSI threshold based on volatility regime
+        rsi_threshold = pd.Series(30.0, index=df.index)
+        rsi_threshold[df['volatility_regime'] == 'LOW'] = 25.0  # Tighter in low volatility
+        rsi_threshold[df['volatility_regime'] == 'HIGH'] = 35.0  # Wider in high volatility
+
+        # Adaptive Z-score threshold based on trend strength
+        zscore_threshold = pd.Series(-1.5, index=df.index)
+        # In trending markets, require stronger mean reversion signal
+        zscore_threshold[df['trend_strength'].abs() > 0.3] = -2.0
+
         long_signals = (
-            (df['rsi'] < 30) &
+            # Original mean reversion conditions
+            (df['rsi'] < rsi_threshold) &
             (df['bb_position'] < 0.2) &
-            (df['zscore'] < -1.5)
+            (df['zscore'] < zscore_threshold) &
+
+            # NEW: Volume confirmation (filters weak reversals)
+            (df['volume_ratio'] > 1.2) &
+
+            # NEW: Trend filter (don't fight strong downtrends)
+            (df['trend_strength'] > -0.5) &
+
+            # NEW: Multiple timeframe confirmation
+            (df['zscore_50'] < -1.0)
         )
+
         return long_signals
-    
+
     @staticmethod
     def identify_short_setups(df: pd.DataFrame) -> pd.Series:
         """
-        Identify potential SHORT mean reversion setups
-        
+        Enhanced SHORT mean reversion setup identification
+
+        Improvements:
+        1. Adaptive RSI thresholds based on volatility regime
+        2. Volume confirmation (above-average volume)
+        3. Trend filter (don't short in strong uptrends)
+        4. Multiple timeframe Z-score confirmation
+
         Criteria:
-        - RSI > 70 (overbought)
+        - RSI > threshold (adaptive: 65-75 based on volatility)
         - Price near upper Bollinger Band
-        - Z-score > 2 (price significantly above mean)
+        - Z-score > threshold (adaptive: 1.5 to 2.0 based on trend)
+        - Above-average volume (confirmation)
+        - Not in strong uptrend (trend strength < 0.5)
+        - Longer timeframe also showing overbought (zscore_50 > 1.0)
         """
+        # Adaptive RSI threshold based on volatility regime
+        rsi_threshold = pd.Series(70.0, index=df.index)
+        rsi_threshold[df['volatility_regime'] == 'LOW'] = 75.0  # Tighter in low volatility
+        rsi_threshold[df['volatility_regime'] == 'HIGH'] = 65.0  # Wider in high volatility
+
+        # Adaptive Z-score threshold based on trend strength
+        zscore_threshold = pd.Series(1.5, index=df.index)
+        # In trending markets, require stronger mean reversion signal
+        zscore_threshold[df['trend_strength'].abs() > 0.3] = 2.0
+
         short_signals = (
-            (df['rsi'] > 70) &
+            # Original mean reversion conditions
+            (df['rsi'] > rsi_threshold) &
             (df['bb_position'] > 0.8) &
-            (df['zscore'] > 1.5)
+            (df['zscore'] > zscore_threshold) &
+
+            # NEW: Volume confirmation (filters weak reversals)
+            (df['volume_ratio'] > 1.2) &
+
+            # NEW: Trend filter (don't fight strong uptrends)
+            (df['trend_strength'] < 0.5) &
+
+            # NEW: Multiple timeframe confirmation
+            (df['zscore_50'] > 1.0)
         )
+
         return short_signals
 
 
@@ -614,37 +684,42 @@ class MLMeanReversionBot:
         return setup
     
     def backtest(self, df: pd.DataFrame, initial_capital: float = 100,
-                leverage: int = 20, risk_per_trade: float = 0.15,
-                stop_loss_pct: float = 0.008, take_profit_pct: float = 0.012,
-                use_limit_orders: bool = True) -> Dict:
+                leverage: int = 10, risk_per_trade: float = 0.05,
+                stop_loss_pct: float = 0.015, take_profit_pct: float = 0.03,
+                use_limit_orders: bool = True, use_trailing_stop: bool = True) -> Dict:
         """
         Backtest the ML-enhanced mean reversion strategy with REALISTIC mainnet simulation
-        
+
         Args:
             df: Historical MAINNET data with features
             initial_capital: Starting capital (default $100)
-            leverage: Leverage multiplier (default 20x)
-            risk_per_trade: Fraction of capital to risk per trade (0.15 = 15%)
-            stop_loss_pct: Stop loss as % of position value (0.008 = 0.8%)
-            take_profit_pct: Take profit as % of position value (0.012 = 1.2%)
+            leverage: Leverage multiplier (default 10x - REDUCED from 20x for safety)
+            risk_per_trade: Fraction of capital to risk per trade (0.05 = 5% - REDUCED from 15%)
+            stop_loss_pct: Stop loss as % of position value (0.015 = 1.5% - WIDENED from 0.8%)
+            take_profit_pct: Take profit as % of position value (0.03 = 3% - INCREASED from 1.2%)
             use_limit_orders: Use limit orders (True) vs market orders (False)
-            
+            use_trailing_stop: Move stop to breakeven after 60% of TP reached
+
         Returns:
             Dictionary with backtest results
-            
+
         Note:
-            With $100 capital and 20x leverage:
-            - Max position size: $2,000 notional
-            - 1% BTC move = 20% capital impact
-            - SL at 0.8% = $16 loss (16% of capital)
-            - TP at 1.2% = $24 profit (24% of capital)
+            With $100 capital and 10x leverage (CONSERVATIVE SETTINGS):
+            - Max position size: $1,000 notional
+            - 1% BTC move = 10% capital impact
+            - SL at 1.5% = $15 loss (15% of capital)
+            - TP at 3% = $30 profit (30% of capital)
+            - Reward:Risk ratio = 2:1 (much better than 1.5:1 previously)
         """
-        print("\n=== Running Backtest with MAINNET Data ===\n")
+        print("\n=== Running Backtest with MAINNET Data (CONSERVATIVE SETTINGS) ===\n")
         print(f"Capital: ${initial_capital}")
         print(f"Leverage: {leverage}x")
+        print(f"Risk per trade: {risk_per_trade:.1%}")
         print(f"Stop Loss: {stop_loss_pct:.2%} ({stop_loss_pct * leverage:.1%} of capital)")
         print(f"Take Profit: {take_profit_pct:.2%} ({take_profit_pct * leverage:.1%} of capital)")
-        print(f"Order Type: {'LIMIT (Maker: 0.02%)' if use_limit_orders else 'MARKET (Taker: 0.05%)'}\n")
+        print(f"Reward:Risk Ratio: {take_profit_pct/stop_loss_pct:.1f}:1")
+        print(f"Order Type: {'LIMIT (Maker: 0.02%)' if use_limit_orders else 'MARKET (Taker: 0.05%)'}")
+        print(f"Trailing Stop: {'Enabled' if use_trailing_stop else 'Disabled'}\n")
         
         capital = initial_capital
         trades = []
@@ -715,41 +790,87 @@ class MLMeanReversionBot:
             if setup.direction == 'LONG':
                 stop_loss_price = fill_price * (1 - stop_loss_pct)
                 take_profit_price = fill_price * (1 + take_profit_pct)
-                
-                # Check if SL or TP hit
-                if future_prices['low'].min() <= stop_loss_price:
-                    exit_price = stop_loss_price
-                    outcome = 'LOSS'
-                    hit_type = 'SL'
-                elif future_prices['high'].max() >= take_profit_price:
-                    exit_price = take_profit_price
-                    outcome = 'WIN'
-                    hit_type = 'TP'
-                else:
-                    # Neither hit, exit at last price
+                trailing_threshold = fill_price * (1 + 0.6 * take_profit_pct)  # 60% of TP
+
+                # Enhanced exit logic with trailing stop
+                hit_sl = False
+                hit_tp = False
+                hit_trailing = False
+
+                # Check price action bar by bar for trailing stop
+                for idx, (timestamp, row) in enumerate(future_prices.iterrows()):
+                    current_stop = stop_loss_price
+
+                    # Trailing stop: if price reaches 60% of TP, move stop to breakeven
+                    if use_trailing_stop and row['high'] >= trailing_threshold:
+                        current_stop = fill_price  # Move to breakeven
+                        hit_trailing = True
+
+                    # Check if stopped out
+                    if row['low'] <= current_stop:
+                        exit_price = current_stop
+                        outcome = 'LOSS' if current_stop < fill_price else 'WIN'
+                        hit_type = 'TRAILING_BE' if hit_trailing else 'SL'
+                        hit_sl = True
+                        break
+
+                    # Check if TP hit
+                    if row['high'] >= take_profit_price:
+                        exit_price = take_profit_price
+                        outcome = 'WIN'
+                        hit_type = 'TP'
+                        hit_tp = True
+                        break
+
+                # If neither SL nor TP hit, exit at last price
+                if not hit_sl and not hit_tp:
                     exit_price = future_prices.iloc[-1]['close']
                     outcome = 'WIN' if exit_price > fill_price else 'LOSS'
                     hit_type = 'TIMEOUT'
-                
+
                 price_pnl_pct = (exit_price - fill_price) / fill_price
-                
+
             else:  # SHORT
                 stop_loss_price = fill_price * (1 + stop_loss_pct)
                 take_profit_price = fill_price * (1 - take_profit_pct)
-                
-                if future_prices['high'].max() >= stop_loss_price:
-                    exit_price = stop_loss_price
-                    outcome = 'LOSS'
-                    hit_type = 'SL'
-                elif future_prices['low'].min() <= take_profit_price:
-                    exit_price = take_profit_price
-                    outcome = 'WIN'
-                    hit_type = 'TP'
-                else:
+                trailing_threshold = fill_price * (1 - 0.6 * take_profit_pct)  # 60% of TP
+
+                # Enhanced exit logic with trailing stop
+                hit_sl = False
+                hit_tp = False
+                hit_trailing = False
+
+                # Check price action bar by bar for trailing stop
+                for idx, (timestamp, row) in enumerate(future_prices.iterrows()):
+                    current_stop = stop_loss_price
+
+                    # Trailing stop: if price reaches 60% of TP, move stop to breakeven
+                    if use_trailing_stop and row['low'] <= trailing_threshold:
+                        current_stop = fill_price  # Move to breakeven
+                        hit_trailing = True
+
+                    # Check if stopped out
+                    if row['high'] >= current_stop:
+                        exit_price = current_stop
+                        outcome = 'LOSS' if current_stop > fill_price else 'WIN'
+                        hit_type = 'TRAILING_BE' if hit_trailing else 'SL'
+                        hit_sl = True
+                        break
+
+                    # Check if TP hit
+                    if row['low'] <= take_profit_price:
+                        exit_price = take_profit_price
+                        outcome = 'WIN'
+                        hit_type = 'TP'
+                        hit_tp = True
+                        break
+
+                # If neither SL nor TP hit, exit at last price
+                if not hit_sl and not hit_tp:
                     exit_price = future_prices.iloc[-1]['close']
                     outcome = 'WIN' if exit_price < fill_price else 'LOSS'
                     hit_type = 'TIMEOUT'
-                
+
                 price_pnl_pct = (fill_price - exit_price) / fill_price
             
             # Exit fee

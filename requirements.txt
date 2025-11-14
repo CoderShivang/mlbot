@@ -11,7 +11,11 @@ TA-Lib>=0.4.25
 # Visualization
 matplotlib>=3.6.0
 seaborn>=0.12.0
+plotly>=5.11.0  # For interactive charts
+
+# Dashboard (for interactive web interface)
+dash>=2.14.0
+dash-bootstrap-components>=1.5.0
 
 # Optional but recommended
 jupyter>=1.0.0  # For analysis and experimentation
-plotly>=5.11.0  # For interactive charts

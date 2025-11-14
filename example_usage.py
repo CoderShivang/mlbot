@@ -282,10 +282,11 @@ def main():
     """Main execution function"""
     
     print("="*80)
-    print("ML-ENHANCED MEAN REVERSION BOT - MAINNET BACKTEST")
+    print("ML-ENHANCED MEAN REVERSION BOT - MAINNET BACKTEST (CONSERVATIVE SETTINGS)")
     print("="*80)
     print("\n⚠️  Using REAL Binance mainnet data (no actual trades executed)")
-    print("Capital: $100 | Leverage: 20x | Order Type: LIMIT (0.02% fee)\n")
+    print("Capital: $100 | Leverage: 10x | Risk: 5% | Order: LIMIT (0.02% fee)")
+    print("✅ IMPROVED SETTINGS: Lower leverage, wider stops, 2:1 reward:risk\n")
     
     # Step 1: Initialize the bot
     print("\n📦 Step 1: Initializing bot...")
@@ -305,20 +306,24 @@ def main():
     print("\n🤖 Step 3: Training ML model on historical patterns...")
     df_with_features = bot.train_model(df, forward_periods=10)
     
-    # Step 4: Run backtest with realistic parameters
-    print("\n📈 Step 4: Running backtest with $100 @ 20x leverage...")
-    print("   Stop Loss: 0.8% (16% of capital)")
-    print("   Take Profit: 1.2% (24% of capital)")
+    # Step 4: Run backtest with CONSERVATIVE parameters (IMPROVED SETTINGS)
+    print("\n📈 Step 4: Running backtest with $100 @ 10x leverage (CONSERVATIVE)...")
+    print("   Risk per trade: 5% (reduced from 15%)")
+    print("   Stop Loss: 1.5% (15% of capital with 10x)")
+    print("   Take Profit: 3% (30% of capital with 10x)")
+    print("   Reward:Risk: 2:1 (improved from 1.5:1)")
     print("   Order Type: LIMIT (Maker fee: 0.02%)")
-    
+    print("   Trailing Stop: Enabled (moves to breakeven at 60% of TP)")
+
     results = bot.backtest(
         df_with_features,
         initial_capital=100,      # $100 starting capital
-        leverage=20,              # 20x leverage
-        risk_per_trade=0.15,      # Risk 15% of capital per trade
-        stop_loss_pct=0.008,      # 0.8% SL = 16% of capital with 20x
-        take_profit_pct=0.012,    # 1.2% TP = 24% of capital with 20x
-        use_limit_orders=True     # Use limit orders (better fees)
+        leverage=10,              # 10x leverage (REDUCED from 20x for safety)
+        risk_per_trade=0.05,      # Risk 5% of capital per trade (REDUCED from 15%)
+        stop_loss_pct=0.015,      # 1.5% SL = 15% of capital with 10x (WIDENED from 0.8%)
+        take_profit_pct=0.03,     # 3% TP = 30% of capital with 10x (INCREASED from 1.2%)
+        use_limit_orders=True,    # Use limit orders (better fees)
+        use_trailing_stop=True    # Enable trailing stop (NEW FEATURE)
     )
     
     # Step 5: Analyze results
