@@ -69,6 +69,12 @@ def prepare_daily_data(trades):
 
     df = pd.DataFrame(trades)
 
+    # Normalize column names (handle both old and new formats)
+    if 'pnl_pct' in df.columns and 'pnl_percent' not in df.columns:
+        df['pnl_percent'] = df['pnl_pct']
+    if 'pnl_usd' in df.columns and 'pnl_dollars' not in df.columns:
+        df['pnl_dollars'] = df['pnl_usd']
+
     # Parse timestamps
     if 'timestamp' in df.columns:
         df['datetime'] = pd.to_datetime(df['timestamp'])
@@ -145,6 +151,10 @@ def create_day_of_week_charts(trades):
         return html.Div("No data")
 
     df = pd.DataFrame(trades)
+
+    # Normalize column names
+    if 'pnl_pct' in df.columns and 'pnl_percent' not in df.columns:
+        df['pnl_percent'] = df['pnl_pct']
 
     # Parse timestamps
     if 'timestamp' in df.columns:
@@ -245,6 +255,11 @@ def create_equity_drawdown_chart(trades):
         return html.Div("No data")
 
     df = pd.DataFrame(trades)
+
+    # Normalize column names
+    if 'pnl_pct' in df.columns and 'pnl_percent' not in df.columns:
+        df['pnl_percent'] = df['pnl_pct']
+
     df['cumulative_pnl'] = df['pnl_percent'].cumsum()
     df['equity'] = 100 * (1 + df['cumulative_pnl'])
 
@@ -415,6 +430,10 @@ def create_trade_table(trades, outcome_filter='all', direction_filter='all'):
         return html.Div("No trades")
 
     df = pd.DataFrame(trades)
+
+    # Normalize column names
+    if 'pnl_pct' in df.columns and 'pnl_percent' not in df.columns:
+        df['pnl_percent'] = df['pnl_pct']
 
     # Apply filters
     if outcome_filter == 'win':
