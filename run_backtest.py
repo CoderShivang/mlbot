@@ -198,10 +198,16 @@ def train_model_with_progress(bot, df, forward_periods=10):
 
     # Train-test split
     from sklearn.model_selection import train_test_split
+    from sklearn.preprocessing import StandardScaler
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
     print(f"   └─ Training set: {len(X_train):,} samples")
     print(f"   └─ Test set: {len(X_test):,} samples")
+
+    # Scale features
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
 
     # Train with progress
     from sklearn.ensemble import GradientBoostingClassifier
@@ -238,7 +244,7 @@ def train_model_with_progress(bot, df, forward_periods=10):
     t.start()
 
     # Train
-    model.fit(X_train, y_train)
+    model.fit(X_train_scaled, y_train)
 
     done = True
     t.join()
@@ -247,8 +253,8 @@ def train_model_with_progress(bot, df, forward_periods=10):
     # Evaluate
     print_info("Evaluating model performance...")
 
-    train_acc = accuracy_score(y_train, model.predict(X_train))
-    test_acc = accuracy_score(y_test, model.predict(X_test))
+    train_acc = accuracy_score(y_train, model.predict(X_train_scaled))
+    test_acc = accuracy_score(y_test, model.predict(X_test_scaled))
 
     print(f"   └─ Training Accuracy: {train_acc:.2%}")
     print(f"   └─ Testing Accuracy:  {test_acc:.2%}")
@@ -272,7 +278,11 @@ def train_model_with_progress(bot, df, forward_periods=10):
 
     # Update bot's ML model
     bot.ml_model.model = model
+    bot.ml_model.scaler = scaler
     bot.ml_model.feature_names = feature_cols
+    bot.ml_model.is_trained = True
+
+    print_success("Model training complete and ready for backtest!")
 
     return df_features
 
@@ -319,20 +329,32 @@ def display_results(results):
     print(f"Initial Capital:    ${results['initial_capital']:.2f}")
     print(f"Final Capital:      {pnl_color}${results['final_capital']:.2f}{Colors.ENDC}")
     print(f"Total Return:       {pnl_color}{results['total_return']:.2%}{Colors.ENDC}")
-    print(f"ROI with {results['leverage']}x:     {pnl_color}{results['roi_leveraged']:.2%}{Colors.ENDC}")
+
+    # Calculate ROI considering leverage
+    roi_with_leverage = results['total_return'] * results['leverage']
+    print(f"ROI with {results['leverage']}x:     {pnl_color}{roi_with_leverage:.2%}{Colors.ENDC}")
 
     # Trade Statistics
     print(f"\n{Colors.BOLD}Trade Statistics{Colors.ENDC}")
     print(f"{'─'*80}")
     print(f"Total Trades:       {results['total_trades']}")
+
+    if results['total_trades'] == 0:
+        print_warning("No trades executed!")
+        print("   Possible reasons:")
+        print("   • ML model rejected all signals (need to train model first)")
+        print("   • No signals met entry criteria in this period")
+        print("   • Try: --no-train flag or use more historical data")
+        return
+
     print(f"Winning Trades:     {Colors.GREEN}{results['winning_trades']}{Colors.ENDC}")
     print(f"Losing Trades:      {Colors.RED}{results['losing_trades']}{Colors.ENDC}")
 
     wr_color = Colors.GREEN if results['win_rate'] >= 0.6 else Colors.YELLOW if results['win_rate'] >= 0.5 else Colors.RED
     print(f"Win Rate:           {wr_color}{results['win_rate']:.2%}{Colors.ENDC}")
 
-    print(f"Avg Win:            {Colors.GREEN}${results['avg_win_usd']:.2f} ({results['avg_win_pct']:.2%}){Colors.ENDC}")
-    print(f"Avg Loss:           {Colors.RED}${results['avg_loss_usd']:.2f} ({results['avg_loss_pct']:.2%}){Colors.ENDC}")
+    print(f"Avg Win:            {Colors.GREEN}${results.get('avg_win_usd', 0):.2f} ({results.get('avg_win_pct', 0):.2%}){Colors.ENDC}")
+    print(f"Avg Loss:           {Colors.RED}${results.get('avg_loss_usd', 0):.2f} ({results.get('avg_loss_pct', 0):.2%}){Colors.ENDC}")
 
     # Risk Metrics
     print(f"\n{Colors.BOLD}Risk Metrics{Colors.ENDC}")
