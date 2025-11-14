@@ -192,9 +192,17 @@ def train_model_with_progress(bot, df, forward_periods=10):
 
     print(f"   └─ Simulating {df_features['is_setup'].sum():,} trade outcomes...")
 
-    for idx in df_features[df_features['is_setup']].index:
-        if idx >= len(df_features) - forward_periods:
-            continue  # Skip if not enough future bars
+    # Iterate over integer positions (not timestamps)
+    setup_positions = df_features[df_features['is_setup']].index
+    total_len = len(df_features)
+
+    for idx in setup_positions:
+        # Get integer position for this timestamp
+        iloc_pos = df_features.index.get_loc(idx)
+
+        # Skip if not enough future bars
+        if iloc_pos >= total_len - forward_periods:
+            continue
 
         entry_price = df_features.loc[idx, 'close']
         is_long = df_features.loc[idx, 'long_signal']
@@ -203,13 +211,13 @@ def train_model_with_progress(bot, df, forward_periods=10):
         hit_tp = False
         hit_sl = False
 
-        # Check next forward_periods bars
+        # Check next forward_periods bars using integer positions
         for i in range(1, forward_periods + 1):
-            future_idx = idx + i
-            if future_idx >= len(df_features):
+            future_iloc = iloc_pos + i
+            if future_iloc >= total_len:
                 break
 
-            future_bar = df_features.iloc[idx + i]
+            future_bar = df_features.iloc[future_iloc]
 
             if is_long:
                 sl_price = entry_price * (1 - sl_pct)
