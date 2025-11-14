@@ -138,15 +138,32 @@ def train_model_with_progress(bot, df, forward_periods=10):
     """Train ML model with progress indicators"""
     print_header("ML MODEL TRAINING")
 
-    print_info("Calculating technical features (24 indicators)...")
-    print("   └─ Mean reversion: RSI, Bollinger Bands, Z-scores")
-    print("   └─ Market context: Volatility, Trend, Volume")
-    print("   └─ Pattern features: Momentum, S/R, Consolidation")
-    print("   └─ Feature interactions: RSI×BB, Trend×Vol, Volume×Mom")
+    # Detect bot type and use appropriate feature engineer
+    from trend_strategy_v2 import ResearchBackedTrendBot
+    is_trend_bot = isinstance(bot, ResearchBackedTrendBot)
 
-    # Calculate features
-    from ml_mean_reversion_bot import FeatureEngineering
-    df_features = FeatureEngineering.calculate_features(df)
+    if is_trend_bot:
+        print_info("Calculating trend following features (25 indicators)...")
+        print("   └─ Momentum: ROC, Rate of Change, Momentum scores")
+        print("   └─ Trend strength: ADX, DI, MACD")
+        print("   └─ Breakouts: High/Low breakouts, Distance metrics")
+        print("   └─ Volume: Volume ratio, OBV, Volume surge")
+
+        # Use trend feature engineer
+        df_features = bot.feature_engineer.calculate_features(df)
+        feature_cols = bot.feature_names
+    else:
+        print_info("Calculating technical features (24 indicators)...")
+        print("   └─ Mean reversion: RSI, Bollinger Bands, Z-scores")
+        print("   └─ Market context: Volatility, Trend, Volume")
+        print("   └─ Pattern features: Momentum, S/R, Consolidation")
+        print("   └─ Feature interactions: RSI×BB, Trend×Vol, Volume×Mom")
+
+        # Use mean reversion feature engineer
+        from ml_mean_reversion_bot import FeatureEngineering
+        df_features = FeatureEngineering.calculate_features(df)
+        feature_cols = FeatureEngineering.get_feature_list()
+
     print_success(f"Features calculated for {len(df_features):,} candles")
 
     # Generate training labels
@@ -156,12 +173,15 @@ def train_model_with_progress(bot, df, forward_periods=10):
     # Calculate forward returns
     df_features['forward_return'] = df_features['close'].shift(-forward_periods) / df_features['close'] - 1
 
-    # Identify signals
-    from ml_mean_reversion_bot import MeanReversionSignals
-    signals = MeanReversionSignals()
-
-    df_features['long_signal'] = signals.identify_long_setups(df_features)
-    df_features['short_signal'] = signals.identify_short_setups(df_features)
+    # Identify signals based on bot type
+    if is_trend_bot:
+        df_features['long_signal'] = bot.signal_generator.identify_long_trends(df_features)
+        df_features['short_signal'] = bot.signal_generator.identify_short_trends(df_features)
+    else:
+        from ml_mean_reversion_bot import MeanReversionSignals
+        signals = MeanReversionSignals()
+        df_features['long_signal'] = signals.identify_long_setups(df_features)
+        df_features['short_signal'] = signals.identify_short_setups(df_features)
 
     # Create labels
     df_features['is_setup'] = df_features['long_signal'] | df_features['short_signal']
@@ -195,8 +215,8 @@ def train_model_with_progress(bot, df, forward_periods=10):
     print(f"   └─ Accuracy: {model_info['accuracy']}")
     print(f"   └─ Overfitting Risk: {model_info['overfitting_risk']}")
 
-    # Get feature list
-    feature_cols = FeatureEngineering.get_feature_list()
+    # Filter feature_cols to only include columns that exist in df_features
+    # (feature_cols already set above based on bot type)
     feature_cols = [col for col in feature_cols if col in df_features.columns]
 
     # Prepare training data
