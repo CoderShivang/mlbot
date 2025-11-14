@@ -106,70 +106,78 @@ class EnhancedFeatureEngineering:
         """
         data = df.copy()
 
-        # Resample to 1H
-        if interval == '15m':
-            df_1h = data.resample('1H', on=data.index if isinstance(data.index, pd.DatetimeIndex) else data.index).agg({
-                'open': 'first',
-                'high': 'max',
-                'low': 'min',
-                'close': 'last',
-                'volume': 'sum'
-            }).dropna()
-
-            if len(df_1h) > 50:
-                # 1H RSI
-                df_1h['rsi_1h'] = talib.RSI(df_1h['close'], timeperiod=14)
-
-                # 1H trend (EMA crossover)
-                df_1h['ema_20_1h'] = talib.EMA(df_1h['close'], timeperiod=20)
-                df_1h['ema_50_1h'] = talib.EMA(df_1h['close'], timeperiod=50)
-                df_1h['trend_1h'] = np.where(
-                    df_1h['ema_20_1h'] > df_1h['ema_50_1h'],
-                    1.0,  # Bullish
-                    -1.0  # Bearish
-                )
-
-                # Merge back to 15m data
-                data = data.merge(
-                    df_1h[['rsi_1h', 'trend_1h']],
-                    left_index=True,
-                    right_index=True,
-                    how='left'
-                )
-                data['rsi_1h'] = data['rsi_1h'].ffill()
-                data['trend_1h'] = data['trend_1h'].ffill()
+        # Ensure index is DatetimeIndex
+        if not isinstance(data.index, pd.DatetimeIndex):
+            if 'timestamp' in data.columns:
+                data.set_index('timestamp', inplace=True)
             else:
+                print("Warning: Cannot add multi-timeframe features without datetime index")
                 data['rsi_1h'] = 50.0
                 data['trend_1h'] = 0.0
+                data['trend_4h'] = 0.0
+                return data
 
-            # Resample to 4H
-            df_4h = data.resample('4H', on=data.index if isinstance(data.index, pd.DatetimeIndex) else data.index).agg({
-                'open': 'first',
-                'high': 'max',
-                'low': 'min',
-                'close': 'last',
-                'volume': 'sum'
-            }).dropna()
+        # Resample to 1H
+        if interval == '15m':
+            try:
+                df_1h = data.resample('1H').agg({
+                    'open': 'first',
+                    'high': 'max',
+                    'low': 'min',
+                    'close': 'last',
+                    'volume': 'sum'
+                }).dropna()
 
-            if len(df_4h) > 50:
-                # 4H trend (EMA crossover)
-                df_4h['ema_20_4h'] = talib.EMA(df_4h['close'], timeperiod=20)
-                df_4h['ema_50_4h'] = talib.EMA(df_4h['close'], timeperiod=50)
-                df_4h['trend_4h'] = np.where(
-                    df_4h['ema_20_4h'] > df_4h['ema_50_4h'],
-                    1.0,  # Bullish
-                    -1.0  # Bearish
-                )
+                if len(df_1h) > 50:
+                    # 1H RSI
+                    df_1h['rsi_1h'] = talib.RSI(df_1h['close'], timeperiod=14)
 
-                # Merge back
-                data = data.merge(
-                    df_4h[['trend_4h']],
-                    left_index=True,
-                    right_index=True,
-                    how='left'
-                )
-                data['trend_4h'] = data['trend_4h'].ffill()
-            else:
+                    # 1H trend (EMA crossover)
+                    df_1h['ema_20_1h'] = talib.EMA(df_1h['close'], timeperiod=20)
+                    df_1h['ema_50_1h'] = talib.EMA(df_1h['close'], timeperiod=50)
+                    df_1h['trend_1h'] = np.where(
+                        df_1h['ema_20_1h'] > df_1h['ema_50_1h'],
+                        1.0,  # Bullish
+                        -1.0  # Bearish
+                    )
+
+                    # Merge back to 15m data
+                    data = data.join(df_1h[['rsi_1h', 'trend_1h']], how='left')
+                    data['rsi_1h'] = data['rsi_1h'].ffill()
+                    data['trend_1h'] = data['trend_1h'].ffill()
+                else:
+                    data['rsi_1h'] = 50.0
+                    data['trend_1h'] = 0.0
+
+                # Resample to 4H
+                df_4h = data.resample('4H').agg({
+                    'open': 'first',
+                    'high': 'max',
+                    'low': 'min',
+                    'close': 'last',
+                    'volume': 'sum'
+                }).dropna()
+
+                if len(df_4h) > 50:
+                    # 4H trend (EMA crossover)
+                    df_4h['ema_20_4h'] = talib.EMA(df_4h['close'], timeperiod=20)
+                    df_4h['ema_50_4h'] = talib.EMA(df_4h['close'], timeperiod=50)
+                    df_4h['trend_4h'] = np.where(
+                        df_4h['ema_20_4h'] > df_4h['ema_50_4h'],
+                        1.0,  # Bullish
+                        -1.0  # Bearish
+                    )
+
+                    # Merge back
+                    data = data.join(df_4h[['trend_4h']], how='left')
+                    data['trend_4h'] = data['trend_4h'].ffill()
+                else:
+                    data['trend_4h'] = 0.0
+
+            except Exception as e:
+                print(f"Warning: Multi-timeframe feature calculation failed: {e}")
+                data['rsi_1h'] = 50.0
+                data['trend_1h'] = 0.0
                 data['trend_4h'] = 0.0
 
         return data
