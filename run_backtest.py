@@ -863,19 +863,53 @@ Notes:
         output_dir = Path(args.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Save model
+        # Create backtest archive directory
+        backtest_dir = Path('./backtest')
+        backtest_dir.mkdir(parents=True, exist_ok=True)
+
+        # Generate timestamped filename
+        now = datetime.now()
+
+        # Determine backtest type
+        if args.walk_forward:
+            backtest_type = f"walkforward_{args.train_window}x{args.test_window}"
+        else:
+            backtest_type = "standard"
+
+        # Get period description
+        if args.days:
+            period = f"{args.days}days"
+        else:
+            period = f"{args.start.replace('/', '')}_to_{args.end.replace('/', '')}"
+
+        # Format: backtest_365days_14Nov_16-24_standard.json
+        timestamp_str = now.strftime("%d%b_%H-%M")
+        archive_filename = f"backtest_{period}_{timestamp_str}_{backtest_type}.json"
+
+        # Save model (overwrites with latest)
         model_path = output_dir / 'ml_mean_reversion_model.pkl'
         trades_path = output_dir / 'trade_history.json'
 
         bot.save_state(str(model_path), str(trades_path))
 
-        # Save detailed backtest results for dashboard
-        results_path = output_dir / 'latest_backtest_results.json'
-        save_detailed_results(results, bot, results_path, args)
+        # Save detailed backtest results
+        # 1. Latest results for dashboard (overwrites)
+        latest_results_path = output_dir / 'latest_backtest_results.json'
+        save_detailed_results(results, bot, latest_results_path, args)
+
+        # 2. Timestamped archive copy (never overwrites)
+        archive_path = backtest_dir / archive_filename
+        save_detailed_results(results, bot, archive_path, args)
 
         print_success(f"Model saved to: {model_path}")
         print_success(f"Trades saved to: {trades_path}")
-        print_success(f"Detailed results saved to: {results_path}")
+        print_success(f"Latest results: {latest_results_path}")
+        print_success(f"Archive saved: {archive_path}")
+
+        # Show archive location
+        print(f"\n{Colors.CYAN}📁 Backtest Archive:{Colors.ENDC}")
+        print(f"   All your backtests are saved in: ./backtest/")
+        print(f"   Latest: {archive_filename}")
 
     print(f"\n{Colors.GREEN}{Colors.BOLD}{'='*80}{Colors.ENDC}")
     print(f"{Colors.GREEN}{Colors.BOLD}Backtest Complete!{Colors.ENDC}")
