@@ -166,12 +166,11 @@ def train_model_with_progress(bot, df, forward_periods=10):
 
     print_success(f"Features calculated for {len(df_features):,} candles")
 
-    # Generate training labels
+    # Generate training labels using SIMULATED TRADE OUTCOMES
+    # This fixes the overfitting problem by matching training to actual trading
     print_info("Generating training labels...")
-    print(f"   └─ Checking forward returns over {forward_periods} periods")
-
-    # Calculate forward returns
-    df_features['forward_return'] = df_features['close'].shift(-forward_periods) / df_features['close'] - 1
+    print(f"   └─ Simulating actual SL/TP outcomes (not just forward returns)")
+    print(f"   └─ SL: 1.5% | TP: 3.0% | Max hold: {forward_periods} bars")
 
     # Identify signals based on bot type
     if is_trend_bot:
@@ -186,19 +185,70 @@ def train_model_with_progress(bot, df, forward_periods=10):
     # Create labels
     df_features['is_setup'] = df_features['long_signal'] | df_features['short_signal']
 
-    # Label success (1) or failure (0)
-    threshold = 0.01  # 1% return threshold
+    # Simulate actual trade outcomes with SL/TP (CRITICAL FIX)
     df_features['success'] = 0
+    sl_pct = 0.015  # 1.5% stop loss
+    tp_pct = 0.03   # 3% take profit
 
-    long_mask = df_features['long_signal']
-    short_mask = df_features['short_signal']
+    print(f"   └─ Simulating {df_features['is_setup'].sum():,} trade outcomes...")
 
-    df_features.loc[long_mask, 'success'] = (df_features.loc[long_mask, 'forward_return'] > threshold).astype(int)
-    df_features.loc[short_mask, 'success'] = (df_features.loc[short_mask, 'forward_return'] < -threshold).astype(int)
+    for idx in df_features[df_features['is_setup']].index:
+        if idx >= len(df_features) - forward_periods:
+            continue  # Skip if not enough future bars
+
+        entry_price = df_features.loc[idx, 'close']
+        is_long = df_features.loc[idx, 'long_signal']
+
+        # Simulate trade execution with SL/TP
+        hit_tp = False
+        hit_sl = False
+
+        # Check next forward_periods bars
+        for i in range(1, forward_periods + 1):
+            future_idx = idx + i
+            if future_idx >= len(df_features):
+                break
+
+            future_bar = df_features.iloc[idx + i]
+
+            if is_long:
+                sl_price = entry_price * (1 - sl_pct)
+                tp_price = entry_price * (1 + tp_pct)
+
+                # Check SL first (more conservative)
+                if future_bar['low'] <= sl_price:
+                    hit_sl = True
+                    break
+
+                # Check TP
+                if future_bar['high'] >= tp_price:
+                    hit_tp = True
+                    break
+            else:  # SHORT
+                sl_price = entry_price * (1 + sl_pct)
+                tp_price = entry_price * (1 - tp_pct)
+
+                # Check SL first
+                if future_bar['high'] >= sl_price:
+                    hit_sl = True
+                    break
+
+                # Check TP
+                if future_bar['low'] <= tp_price:
+                    hit_tp = True
+                    break
+
+        # Label: 1 if TP hit, 0 if SL hit or timeout
+        df_features.loc[idx, 'success'] = 1 if hit_tp else 0
 
     # Count training samples
     training_samples = df_features['is_setup'].sum()
+    successful_samples = df_features[df_features['is_setup']]['success'].sum()
+    success_rate = successful_samples / training_samples if training_samples > 0 else 0
+
     print_success(f"Generated {training_samples:,} training samples from historical signals")
+    print(f"   └─ Historical win rate: {success_rate:.1%} (TP hit before SL)")
+    print(f"   └─ This should match actual backtest win rate closely!")
 
     if training_samples < 50:
         print_warning("Few training samples - model may not be reliable")
@@ -429,6 +479,9 @@ def walk_forward_backtest(bot, df, args):
     """
     Proper walk-forward analysis without look-ahead bias
 
+    NOW WITH CAPITAL CONTINUITY: Each window starts with ending capital from previous window
+    This matches real-world trading where capital compounds/depletes over time.
+
     Trains on PAST data only, tests on FUTURE unseen data
     Retrains the model periodically as it "walks forward" through time
 
@@ -443,6 +496,7 @@ def walk_forward_backtest(bot, df, args):
     print_header("WALK-FORWARD ANALYSIS")
     print_info(f"Training Window: {args.train_window} days")
     print_info(f"Testing Window: {args.test_window} days")
+    print_info(f"Initial Capital: ${args.capital} (compounds across windows)")
     print(f"{'─'*80}\n")
 
     from ml_mean_reversion_bot import FeatureEngineering
@@ -464,10 +518,11 @@ def walk_forward_backtest(bot, df, args):
         print(f"   Try: --days {int((min_start + test_window_bars) / 96) + 10}")
         sys.exit(1)
 
-    # Walk through time
+    # Walk through time with COMPOUNDING CAPITAL
     window_results = []
     window_num = 1
     current_pos = min_start
+    cumulative_capital = args.capital  # Track capital across windows
 
     while current_pos + test_window_bars <= total_days:
         print(f"\n{Colors.CYAN}{'='*80}{Colors.ENDC}")
@@ -488,6 +543,7 @@ def walk_forward_backtest(bot, df, args):
 
         print_info(f"Training Period: {train_dates} ({len(train_df)} bars)")
         print_info(f"Testing Period:  {test_dates} ({len(test_df)} bars)")
+        print_info(f"Starting Capital: ${cumulative_capital:.2f} (from previous window)")
 
         # Train model on historical data ONLY
         try:
@@ -499,12 +555,12 @@ def walk_forward_backtest(bot, df, args):
             window_num += 1
             continue
 
-        # Test on future unseen data
+        # Test on future unseen data WITH CURRENT CAPITAL
         print_info(f"\nTesting on unseen future data...")
 
         results = bot.backtest(
             test_df,
-            initial_capital=args.capital,
+            initial_capital=cumulative_capital,  # Use ending capital from previous window
             leverage=args.leverage,
             risk_per_trade=args.risk,
             stop_loss_pct=args.stop_loss,
@@ -513,12 +569,20 @@ def walk_forward_backtest(bot, df, args):
             use_trailing_stop=not args.no_trailing
         )
 
+        # Update cumulative capital for next window
+        ending_capital = results['final_capital']
+        capital_change = ending_capital - cumulative_capital
+        cumulative_capital = ending_capital
+
         # Store window results
         results['window_num'] = window_num
         results['train_start'] = train_dates.split(' to ')[0]
         results['train_end'] = train_dates.split(' to ')[1]
         results['test_start'] = test_dates.split(' to ')[0]
         results['test_end'] = test_dates.split(' to ')[1]
+        results['starting_capital'] = cumulative_capital - capital_change  # Before this window
+        results['ending_capital'] = ending_capital  # After this window
+        results['capital_change'] = capital_change  # P&L for this window
         window_results.append(results)
 
         # Display window summary
@@ -528,6 +592,7 @@ def walk_forward_backtest(bot, df, args):
         print(f"   Win Rate: {results['win_rate']:.1%}")
         print(f"   Return: {pnl_color}{results['total_return']:.2%}{Colors.ENDC}")
         print(f"   Sharpe: {results['sharpe_ratio']:.2f}")
+        print(f"   Capital: ${cumulative_capital - capital_change:.2f} → ${cumulative_capital:.2f} ({pnl_color}{capital_change:+.2f}{Colors.ENDC})")
 
         # Move forward
         current_pos += test_window_bars
@@ -593,10 +658,18 @@ def walk_forward_backtest(bot, df, args):
     print(f"   Window #{worst_window['window_num']}: {Colors.RED}{worst_window['total_return']:+.2%}{Colors.ENDC}")
     print(f"   Period: {worst_window['test_start']} to {worst_window['test_end']}\n")
 
-    # Calculate cumulative P&L from all trades (CORRECT calculation)
-    total_pnl_usd = sum([t.get('net_pnl_usd', 0) for t in all_trades])
-    cumulative_return = total_pnl_usd / args.capital  # Actual return based on USD P&L
-    final_capital = args.capital + total_pnl_usd
+    # Calculate TRUE compounding return
+    # cumulative_capital was updated through all windows and now contains final capital
+    final_capital = window_results[-1]['ending_capital'] if window_results else args.capital
+    total_pnl_usd = final_capital - args.capital
+    cumulative_return = (final_capital / args.capital) - 1  # Actual compounded return
+
+    # Print compounding summary
+    print_info(f"Capital Evolution (Compounding):")
+    print(f"   Start: ${args.capital:.2f}")
+    print(f"   End: ${final_capital:.2f}")
+    ret_color = Colors.GREEN if cumulative_return > 0 else Colors.RED
+    print(f"   Total Return: {ret_color}{cumulative_return:.2%}{Colors.ENDC} (${total_pnl_usd:+.2f})\n")
 
     # Create aggregate results structure
     aggregate_results = {
@@ -605,15 +678,15 @@ def walk_forward_backtest(bot, df, args):
         'total_trades': total_trades,
         'winning_trades': total_wins,
         'win_rate': avg_win_rate,
-        'total_return': cumulative_return,  # FIXED: Use cumulative, not average
+        'total_return': cumulative_return,  # FIXED: True compounded return
         'avg_return_per_window': avg_return,  # Keep for reference
         'sharpe_ratio': avg_sharpe,
         'trades': all_trades,
         'window_results': window_results,
         'initial_capital': args.capital,
         'leverage': args.leverage,
-        'final_capital': final_capital,  # FIXED: Actual final capital
-        'total_pnl_usd': total_pnl_usd,  # Add explicit USD P&L
+        'final_capital': final_capital,  # FIXED: Actual final compounded capital
+        'total_pnl_usd': total_pnl_usd,  # True P&L with compounding
         'profit_factor': np.mean([wr.get('profit_factor', 1) for wr in window_results]),
         'max_drawdown': max([wr.get('max_drawdown', 0) for wr in window_results]),
         'max_drawdown_usd': max([wr.get('max_drawdown_usd', 0) for wr in window_results]),
