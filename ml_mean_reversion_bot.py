@@ -405,8 +405,18 @@ class MLPatternRecognizer:
             }
         
         # Prepare features
-        X = features[self.feature_names].values.reshape(1, -1)
-        
+        try:
+            X = features[self.feature_names].values.reshape(1, -1)
+            # Ensure numeric type for NaN checking
+            X = X.astype(np.float64)
+        except (ValueError, TypeError) as e:
+            return {
+                'confidence_score': 0.0,
+                'success_probability': 0.0,
+                'should_trade': False,
+                'reason': f'Feature conversion error: {str(e)}'
+            }
+
         # Check for NaN
         if np.isnan(X).any():
             return {
