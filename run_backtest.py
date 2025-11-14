@@ -553,6 +553,11 @@ def walk_forward_backtest(bot, df, args):
     print(f"   Window #{worst_window['window_num']}: {Colors.RED}{worst_window['total_return']:+.2%}{Colors.ENDC}")
     print(f"   Period: {worst_window['test_start']} to {worst_window['test_end']}\n")
 
+    # Calculate cumulative P&L from all trades (CORRECT calculation)
+    total_pnl_usd = sum([t.get('net_pnl_usd', 0) for t in all_trades])
+    cumulative_return = total_pnl_usd / args.capital  # Actual return based on USD P&L
+    final_capital = args.capital + total_pnl_usd
+
     # Create aggregate results structure
     aggregate_results = {
         'total_windows': total_windows,
@@ -560,13 +565,15 @@ def walk_forward_backtest(bot, df, args):
         'total_trades': total_trades,
         'winning_trades': total_wins,
         'win_rate': avg_win_rate,
-        'total_return': avg_return,
+        'total_return': cumulative_return,  # FIXED: Use cumulative, not average
+        'avg_return_per_window': avg_return,  # Keep for reference
         'sharpe_ratio': avg_sharpe,
         'trades': all_trades,
         'window_results': window_results,
         'initial_capital': args.capital,
         'leverage': args.leverage,
-        'final_capital': args.capital * (1 + avg_return),
+        'final_capital': final_capital,  # FIXED: Actual final capital
+        'total_pnl_usd': total_pnl_usd,  # Add explicit USD P&L
         'profit_factor': np.mean([wr.get('profit_factor', 1) for wr in window_results]),
         'max_drawdown': max([wr.get('max_drawdown', 0) for wr in window_results]),
         'max_drawdown_usd': max([wr.get('max_drawdown_usd', 0) for wr in window_results]),

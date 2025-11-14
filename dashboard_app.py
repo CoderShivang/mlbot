@@ -190,10 +190,13 @@ def create_header_metrics(trades):
     wins = len([t for t in trades if t.get(pnl_key, 0) > 0])
     win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
 
+    # FIXED: Calculate actual USD P&L by summing individual trade P&L
+    total_pnl_usd = sum([t.get('pnl_usd', 0) for t in trades])
+    # Calculate percentage return (for display)
     total_pnl_pct = sum([t.get(pnl_key, 0) for t in trades]) * 100
 
     # Color code
-    pnl_color = "text-success" if total_pnl_pct > 0 else "text-danger"
+    pnl_color = "text-success" if total_pnl_usd > 0 else "text-danger"
     wr_color = "text-success" if win_rate >= 60 else "text-warning" if win_rate >= 50 else "text-danger"
 
     return dbc.Row([
@@ -212,7 +215,7 @@ def create_header_metrics(trades):
         dbc.Col([
             html.Div([
                 html.Span("Net P&L: ", style={'fontSize': '18px'}),
-                html.Span(f"${total_pnl_pct*100/100:.2f} ({total_pnl_pct:+.2f}%)",
+                html.Span(f"${total_pnl_usd:.2f} ({total_pnl_pct:+.2f}%)",
                          className=pnl_color, style={'fontSize': '18px', 'fontWeight': 'bold'})
             ])
         ], width=4, className="text-center")
