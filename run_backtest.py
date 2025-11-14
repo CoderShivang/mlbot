@@ -637,17 +637,22 @@ def save_detailed_results(results: dict, bot, output_path: Path, args):
 
     Args:
         results: Backtest results dictionary
-        bot: MLMeanReversionBot instance
+        bot: Trading bot instance (MLMeanReversionBot or ResearchBackedTrendBot)
         output_path: Path to save JSON file
         args: Command-line arguments
     """
     # Extract trade details with ML decision information
     trades_data = []
 
+    from trend_strategy_v2 import TrendTradeSetup
+
     for trade_info in results.get('trades', []):
         setup = trade_info['setup']
 
-        # Serialize TradeSetup data
+        # Detect setup type
+        is_trend_setup = isinstance(setup, TrendTradeSetup)
+
+        # Common fields for both setup types
         trade_detail = {
             'timestamp': setup.timestamp.isoformat() if hasattr(setup.timestamp, 'isoformat') else str(setup.timestamp),
             'direction': setup.direction,
@@ -660,12 +665,30 @@ def save_detailed_results(results: dict, bot, output_path: Path, args):
             'fees': trade_info['fees_usd'],
             'hit_type': trade_info['hit_type'],
 
-            # ML Decision Factors
-            'ml_confidence': setup.confidence_score,
-            'ml_success_prob': setup.predicted_success_prob,
+            # ML Decision Factors (different attribute names for different setups)
+            'ml_confidence': getattr(setup, 'confidence', getattr(setup, 'confidence_score', 0.5)),
+            'ml_success_prob': getattr(setup, 'predicted_success', getattr(setup, 'predicted_success_prob', 0.5)),
+        }
 
-            # Market Features at Entry
-            'features': {
+        # Setup-specific features
+        if is_trend_setup:
+            trade_detail['features'] = {
+                'momentum_score': float(setup.momentum_score),
+                'roc_10': float(setup.roc_10),
+                'roc_20': float(setup.roc_20),
+                'adx': float(setup.adx),
+                'ema_9': float(setup.ema_9),
+                'ema_21': float(setup.ema_21),
+                'ema_50': float(setup.ema_50),
+                'volume_ratio': float(setup.volume_ratio),
+                'volume_surge': bool(setup.volume_surge),
+                'is_breakout': bool(setup.is_breakout),
+                'bars_since_breakout': int(setup.bars_since_breakout)
+            }
+            trade_detail['similar_trades'] = []  # Trend bot doesn't track similar trades
+        else:
+            # Mean reversion setup
+            trade_detail['features'] = {
                 'rsi': float(setup.rsi),
                 'bb_position': float(setup.bb_position),
                 'zscore': float(setup.zscore),
@@ -676,11 +699,8 @@ def save_detailed_results(results: dict, bot, output_path: Path, args):
                 'pattern_momentum': float(setup.pattern_momentum),
                 'support_resistance_proximity': float(setup.support_resistance_proximity),
                 'consolidation_duration': int(setup.consolidation_duration)
-            },
-
-            # Similar Historical Trades
-            'similar_trades': setup.similar_trades if setup.similar_trades else []
-        }
+            }
+            trade_detail['similar_trades'] = setup.similar_trades if setup.similar_trades else []
 
         trades_data.append(trade_detail)
 

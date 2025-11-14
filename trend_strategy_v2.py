@@ -8,11 +8,11 @@ Based on academic research:
 - Alpaca Markets: Successful Bitcoin trend strategies using momentum + breakouts
 
 Key Principles:
-1. Follow strong momentum (not fight it)
-2. Breakout confirmation with volume
-3. Multi-timeframe alignment
-4. Minimal filtering (let the model decide)
-5. Target: 50-100+ trades per year on 15m timeframe
+1. Follow momentum (not fight it)
+2. Volume confirmation (very permissive)
+3. Simple EMA alignment
+4. MINIMAL filtering (maximize trades, let ML and risk management decide quality)
+5. Target: 100+ trades per year on 15m timeframe
 
 Performance Target:
 - Sharpe Ratio: >2.0 (research shows 3.0+ is achievable)
@@ -118,26 +118,25 @@ class ResearchBackedTrendSignals:
         # ADX for trend strength
         adx = talib.ADX(df['high'], df['low'], df['close'], timeperiod=14)
 
-        # LONG signal criteria (LESS RESTRICTIVE than before)
+        # LONG signal criteria (VERY LIBERAL - maximize trade frequency)
         long_signals = (
-            # Strong momentum (top 30% of rolling 100-bar momentum)
-            (momentum_score > momentum_score.rolling(100).quantile(0.70)) &
+            # Positive momentum (top 50% of rolling 100-bar momentum)
+            (momentum_score > momentum_score.rolling(100).quantile(0.50)) &
 
-            # Price structure: above EMA9 and EMA21
+            # Price above EMA9 (simple trend check)
             (df['close'] > ema_9) &
-            (df['close'] > ema_21) &
 
             # EMA alignment (short-term above mid-term)
             (ema_9 > ema_21) &
 
-            # Volume above average (confirms strength)
-            (volume_ratio > 1.0) &
+            # Volume confirms (lowered threshold)
+            (volume_ratio > 0.7) &
 
-            # Moderate trend strength (ADX > 20, not too restrictive)
-            (adx > 20) &
+            # Weak trend is OK (ADX > 15, very permissive)
+            (adx > 15) &
 
-            # Not extremely overbought (RSI < 85, very generous)
-            (talib.RSI(df['close'], timeperiod=14) < 85)
+            # Very generous RSI bounds (< 90)
+            (talib.RSI(df['close'], timeperiod=14) < 90)
         )
 
         return long_signals
@@ -168,26 +167,25 @@ class ResearchBackedTrendSignals:
         # ADX for trend strength
         adx = talib.ADX(df['high'], df['low'], df['close'], timeperiod=14)
 
-        # SHORT signal criteria (LESS RESTRICTIVE)
+        # SHORT signal criteria (VERY LIBERAL - maximize trade frequency)
         short_signals = (
-            # Strong negative momentum (bottom 30% of rolling 100-bar momentum)
-            (momentum_score < momentum_score.rolling(100).quantile(0.30)) &
+            # Negative momentum (bottom 50% of rolling 100-bar momentum)
+            (momentum_score < momentum_score.rolling(100).quantile(0.50)) &
 
-            # Price structure: below EMA9 and EMA21
+            # Price below EMA9 (simple trend check)
             (df['close'] < ema_9) &
-            (df['close'] < ema_21) &
 
             # EMA alignment (short-term below mid-term)
             (ema_9 < ema_21) &
 
-            # Volume above average
-            (volume_ratio > 1.0) &
+            # Volume confirms (lowered threshold)
+            (volume_ratio > 0.7) &
 
-            # Moderate trend strength
-            (adx > 20) &
+            # Weak trend is OK (ADX > 15, very permissive)
+            (adx > 15) &
 
-            # Not extremely oversold (RSI > 15, very generous)
-            (talib.RSI(df['close'], timeperiod=14) > 15)
+            # Very generous RSI bounds (> 10)
+            (talib.RSI(df['close'], timeperiod=14) > 10)
         )
 
         return short_signals
@@ -314,13 +312,13 @@ class ResearchBackedTrendBot:
     Goal: Achieve Sharpe ratio >2.0 with 50-100+ trades per year
     """
 
-    def __init__(self, model_type: str = 'randomforest', min_confidence: float = 0.45):
+    def __init__(self, model_type: str = 'randomforest', min_confidence: float = 0.30):
         """
         Initialize trend bot
 
         Args:
             model_type: 'randomforest' (recommended), 'gradientboost', 'xgboost', 'ensemble'
-            min_confidence: Lower threshold for more trades (default: 0.45 vs old 0.70)
+            min_confidence: Very low threshold for maximum trades (default: 0.30 vs old 0.70)
         """
         from model_factory import EnhancedMLModel
         from ml_mean_reversion_bot import FeatureEngineering
@@ -354,9 +352,9 @@ class ResearchBackedTrendBot:
         # Combine signals
         trend_data = df_features[df_features['long_signal'] | df_features['short_signal']].copy()
 
-        print(f"Found {len(trend_data)} trend setups (target: 50-100+ per year)")
+        print(f"Found {len(trend_data)} trend setups (target: 100+ per year)")
 
-        if len(trend_data) > 20:  # Lower threshold than before (was 30)
+        if len(trend_data) > 10:  # Very low threshold to allow training with less data
             X = trend_data[self.feature_names].fillna(0)
             y = trend_data['forward_return']
 
@@ -400,15 +398,15 @@ class ResearchBackedTrendBot:
             bars_since_breakout=0  # Placeholder
         )
 
-        # Get ML prediction (with LOWER threshold)
+        # Get ML prediction (with VERY LOW threshold to maximize trades)
         features = current[self.feature_names]
         ml_prediction = self.ml_model.predict_with_confidence(features)
 
         setup.confidence = ml_prediction['confidence_score']
         setup.predicted_success = ml_prediction['success_probability']
 
-        # LESS RESTRICTIVE: Lower success probability threshold
-        if ml_prediction['success_probability'] < 0.45:  # Was 0.60 before
+        # VERY PERMISSIVE: Very low success probability threshold to get more trades
+        if ml_prediction['success_probability'] < 0.30:  # Was 0.45, now even lower
             return None
 
         if not ml_prediction['should_trade']:
