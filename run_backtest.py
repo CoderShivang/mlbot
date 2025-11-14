@@ -398,6 +398,192 @@ def display_results(results):
     print(f"\n{'='*80}\n")
 
 
+def walk_forward_backtest(bot, df, args):
+    """
+    Proper walk-forward analysis without look-ahead bias
+
+    Trains on PAST data only, tests on FUTURE unseen data
+    Retrains the model periodically as it "walks forward" through time
+
+    Args:
+        bot: MLMeanReversionBot instance
+        df: Full historical DataFrame
+        args: Command-line arguments with walk-forward parameters
+
+    Returns:
+        Aggregated results from all windows
+    """
+    print_header("WALK-FORWARD ANALYSIS")
+    print_info(f"Training Window: {args.train_window} days")
+    print_info(f"Testing Window: {args.test_window} days")
+    print(f"{'─'*80}\n")
+
+    from ml_mean_reversion_bot import FeatureEngineering
+
+    # Calculate features once for entire dataset
+    df = FeatureEngineering.calculate_features(df)
+
+    # Determine window boundaries
+    total_days = len(df)
+    train_window_bars = args.train_window * 96  # ~96 15min bars per day
+    test_window_bars = args.test_window * 96
+
+    # Need at least train_window + 100 bars for indicators
+    min_start = train_window_bars + 100
+
+    if total_days < min_start + test_window_bars:
+        print_error(f"Not enough data! Need at least {(min_start + test_window_bars) / 96:.0f} days")
+        print(f"   You have: {total_days / 96:.0f} days")
+        print(f"   Try: --days {int((min_start + test_window_bars) / 96) + 10}")
+        sys.exit(1)
+
+    # Walk through time
+    window_results = []
+    window_num = 1
+    current_pos = min_start
+
+    while current_pos + test_window_bars <= total_days:
+        print(f"\n{Colors.CYAN}{'='*80}{Colors.ENDC}")
+        print(f"{Colors.CYAN}{Colors.BOLD}Window #{window_num}{Colors.ENDC}")
+        print(f"{Colors.CYAN}{'='*80}{Colors.ENDC}\n")
+
+        # Define train and test periods
+        train_start = current_pos - train_window_bars
+        train_end = current_pos
+        test_start = current_pos
+        test_end = current_pos + test_window_bars
+
+        train_df = df.iloc[train_start:train_end].copy()
+        test_df = df.iloc[test_start:test_end].copy()
+
+        train_dates = f"{train_df.index[0].strftime('%Y-%m-%d')} to {train_df.index[-1].strftime('%Y-%m-%d')}"
+        test_dates = f"{test_df.index[0].strftime('%Y-%m-%d')} to {test_df.index[-1].strftime('%Y-%m-%d')}"
+
+        print_info(f"Training Period: {train_dates} ({len(train_df)} bars)")
+        print_info(f"Testing Period:  {test_dates} ({len(test_df)} bars)")
+
+        # Train model on historical data ONLY
+        try:
+            train_model_with_progress(bot, train_df, args.forward_periods)
+        except Exception as e:
+            print_warning(f"Training failed for window {window_num}: {e}")
+            print("   Skipping this window...")
+            current_pos += test_window_bars
+            window_num += 1
+            continue
+
+        # Test on future unseen data
+        print_info(f"\nTesting on unseen future data...")
+
+        results = bot.backtest(
+            test_df,
+            initial_capital=args.capital,
+            leverage=args.leverage,
+            risk_per_trade=args.risk,
+            stop_loss_pct=args.stop_loss,
+            take_profit_pct=args.take_profit,
+            use_limit_orders=not args.use_market,
+            use_trailing_stop=not args.no_trailing
+        )
+
+        # Store window results
+        results['window_num'] = window_num
+        results['train_start'] = train_dates.split(' to ')[0]
+        results['train_end'] = train_dates.split(' to ')[1]
+        results['test_start'] = test_dates.split(' to ')[0]
+        results['test_end'] = test_dates.split(' to ')[1]
+        window_results.append(results)
+
+        # Display window summary
+        print(f"\n{Colors.BOLD}Window #{window_num} Results:{Colors.ENDC}")
+        pnl_color = Colors.GREEN if results['total_return'] > 0 else Colors.RED
+        print(f"   Trades: {results['total_trades']}")
+        print(f"   Win Rate: {results['win_rate']:.1%}")
+        print(f"   Return: {pnl_color}{results['total_return']:.2%}{Colors.ENDC}")
+        print(f"   Sharpe: {results['sharpe_ratio']:.2f}")
+
+        # Move forward
+        current_pos += test_window_bars
+        window_num += 1
+
+    # Aggregate all windows
+    print(f"\n\n{Colors.GREEN}{'='*80}{Colors.ENDC}")
+    print(f"{Colors.GREEN}{Colors.BOLD}WALK-FORWARD AGGREGATE RESULTS{Colors.ENDC}")
+    print(f"{Colors.GREEN}{'='*80}{Colors.ENDC}\n")
+
+    # Combine all trades
+    all_trades = []
+    for wr in window_results:
+        all_trades.extend(wr.get('trades', []))
+
+    # Calculate aggregate metrics
+    total_windows = len(window_results)
+    winning_windows = sum(1 for wr in window_results if wr['total_return'] > 0)
+
+    total_trades = sum(wr['total_trades'] for wr in window_results)
+    total_wins = sum(wr['winning_trades'] for wr in window_results)
+
+    avg_return = np.mean([wr['total_return'] for wr in window_results])
+    avg_sharpe = np.mean([wr['sharpe_ratio'] for wr in window_results])
+    avg_win_rate = np.mean([wr['win_rate'] for wr in window_results])
+
+    # Best and worst windows
+    best_window = max(window_results, key=lambda x: x['total_return'])
+    worst_window = min(window_results, key=lambda x: x['total_return'])
+
+    print_info(f"Total Windows Tested: {total_windows}")
+    print(f"   Profitable Windows: {Colors.GREEN}{winning_windows}{Colors.ENDC} ({winning_windows/total_windows:.1%})")
+    print(f"   Unprofitable Windows: {Colors.RED}{total_windows - winning_windows}{Colors.ENDC}\n")
+
+    print_info(f"Aggregate Performance:")
+    print(f"   Total Trades: {total_trades}")
+    print(f"   Winning Trades: {total_wins}")
+    wr_color = Colors.GREEN if avg_win_rate >= 0.55 else Colors.YELLOW if avg_win_rate >= 0.50 else Colors.RED
+    print(f"   Average Win Rate: {wr_color}{avg_win_rate:.1%}{Colors.ENDC}")
+    ret_color = Colors.GREEN if avg_return > 0 else Colors.RED
+    print(f"   Average Return per Window: {ret_color}{avg_return:.2%}{Colors.ENDC}")
+    sr_color = Colors.GREEN if avg_sharpe > 1.0 else Colors.YELLOW if avg_sharpe > 0.5 else Colors.RED
+    print(f"   Average Sharpe Ratio: {sr_color}{avg_sharpe:.2f}{Colors.ENDC}\n")
+
+    print_info(f"Best Window:")
+    print(f"   Window #{best_window['window_num']}: {Colors.GREEN}{best_window['total_return']:+.2%}{Colors.ENDC}")
+    print(f"   Period: {best_window['test_start']} to {best_window['test_end']}\n")
+
+    print_info(f"Worst Window:")
+    print(f"   Window #{worst_window['window_num']}: {Colors.RED}{worst_window['total_return']:+.2%}{Colors.ENDC}")
+    print(f"   Period: {worst_window['test_start']} to {worst_window['test_end']}\n")
+
+    # Create aggregate results structure
+    aggregate_results = {
+        'total_windows': total_windows,
+        'profitable_windows': winning_windows,
+        'total_trades': total_trades,
+        'winning_trades': total_wins,
+        'win_rate': avg_win_rate,
+        'total_return': avg_return,
+        'sharpe_ratio': avg_sharpe,
+        'trades': all_trades,
+        'window_results': window_results,
+        'initial_capital': args.capital,
+        'leverage': args.leverage,
+        'final_capital': args.capital * (1 + avg_return),
+        'profit_factor': np.mean([wr.get('profit_factor', 1) for wr in window_results]),
+        'max_drawdown': max([wr.get('max_drawdown', 0) for wr in window_results]),
+        'max_drawdown_usd': max([wr.get('max_drawdown_usd', 0) for wr in window_results]),
+        'total_fees_paid': sum([wr.get('total_fees_paid', 0) for wr in window_results]),
+        'avg_win_usd': np.mean([wr.get('avg_win_usd', 0) for wr in window_results if wr.get('avg_win_usd')]),
+        'avg_loss_usd': np.mean([wr.get('avg_loss_usd', 0) for wr in window_results if wr.get('avg_loss_usd')]),
+        'avg_win_pct': np.mean([wr.get('avg_win_pct', 0) for wr in window_results if wr.get('avg_win_pct')]),
+        'avg_loss_pct': np.mean([wr.get('avg_loss_pct', 0) for wr in window_results if wr.get('avg_loss_pct')]),
+        'max_consecutive_losses': max([wr.get('max_consecutive_losses', 0) for wr in window_results]),
+        'order_type': 'LIMIT' if not args.use_market else 'MARKET',
+        'fee_rate': 0.0002 if not args.use_market else 0.0005,
+        'losing_trades': total_trades - total_wins
+    }
+
+    return aggregate_results
+
+
 def save_detailed_results(results: dict, bot, output_path: Path, args):
     """
     Save detailed backtest results including ML decision data for dashboard
@@ -564,6 +750,14 @@ Notes:
     parser.add_argument('--forward-periods', type=int, default=10,
                        help='Forward periods for ML labels (default: 10)')
 
+    # Walk-forward analysis options
+    parser.add_argument('--walk-forward', action='store_true',
+                       help='Use walk-forward analysis (proper backtesting without look-ahead bias)')
+    parser.add_argument('--train-window', type=int, default=180,
+                       help='Days of historical data to train on (default: 180)')
+    parser.add_argument('--test-window', type=int, default=30,
+                       help='Days to test forward after training (default: 30)')
+
     # Output options
     parser.add_argument('--output-dir', type=str, default='./outputs',
                        help='Output directory for results (default: ./outputs)')
@@ -616,33 +810,43 @@ Notes:
         print_error(f"Failed to fetch data: {e}")
         sys.exit(1)
 
-    # Train ML model
-    if not args.no_train:
-        try:
-            df = train_model_with_progress(bot, df, args.forward_periods)
-        except Exception as e:
-            print_error(f"Training failed: {e}")
-            sys.exit(1)
-    else:
-        print_warning("Skipping ML training - using existing model (if available)")
-
-        # Still need to calculate features
-        print_info("Calculating features for backtest...")
-        from ml_mean_reversion_bot import FeatureEngineering
-        df = FeatureEngineering.calculate_features(df)
-        print_success("Features calculated")
-
-    # Run backtest
+    # Run backtest (walk-forward or standard)
     try:
-        results = run_backtest_with_progress(bot, df, argparse.Namespace(
-            capital=args.capital,
-            leverage=args.leverage,
-            risk=args.risk,
-            stop_loss=args.stop_loss,
-            take_profit=args.take_profit,
-            use_limit=not args.use_market,
-            trailing_stop=not args.no_trailing
-        ))
+        if args.walk_forward:
+            # Walk-forward analysis (proper backtesting)
+            results = walk_forward_backtest(bot, df, args)
+        else:
+            # Standard backtest (has look-ahead bias)
+            if not args.no_train:
+                try:
+                    df = train_model_with_progress(bot, df, args.forward_periods)
+                except Exception as e:
+                    print_error(f"Training failed: {e}")
+                    sys.exit(1)
+            else:
+                print_warning("Skipping ML training - using existing model (if available)")
+
+                # Still need to calculate features
+                print_info("Calculating features for backtest...")
+                from ml_mean_reversion_bot import FeatureEngineering
+                df = FeatureEngineering.calculate_features(df)
+                print_success("Features calculated")
+
+            results = run_backtest_with_progress(bot, df, argparse.Namespace(
+                capital=args.capital,
+                leverage=args.leverage,
+                risk=args.risk,
+                stop_loss=args.stop_loss,
+                take_profit=args.take_profit,
+                use_limit=not args.use_market,
+                trailing_stop=not args.no_trailing
+            ))
+
+            if not args.walk_forward:
+                print_warning("⚠️  Standard backtest has LOOK-AHEAD BIAS")
+                print("   The model was trained on the same data it's being tested on.")
+                print(f"   For realistic results, use: {Colors.CYAN}--walk-forward{Colors.ENDC}")
+
     except Exception as e:
         print_error(f"Backtest failed: {e}")
         import traceback
