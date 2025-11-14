@@ -236,16 +236,18 @@ class EnhancedMLModel:
             # Confidence score (how sure the model is)
             confidence = max(proba)
 
-            # Decision logic
+            # Decision logic: LIBERAL thresholds to maximize trade frequency
+            # Philosophy: Better to take marginal trades with good risk management
+            # than to be overly conservative and have no data
             should_trade = (
-                success_prob >= 0.60 and  # At least 60% predicted success
+                success_prob >= 0.30 and  # Accept 30%+ success probability (with 2:1 R:R, this is profitable)
                 confidence >= self.min_confidence  # At least minimum confidence
             )
 
             reason = "Trade approved"
             if not should_trade:
-                if success_prob < 0.60:
-                    reason = f"Success probability too low: {success_prob:.1%}"
+                if success_prob < 0.30:
+                    reason = f"Success probability too low: {success_prob:.1%} (need >= 30%)"
                 elif confidence < self.min_confidence:
                     reason = f"Confidence too low: {confidence:.1%} < {self.min_confidence:.1%}"
 

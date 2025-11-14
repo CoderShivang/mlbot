@@ -7,17 +7,24 @@ Based on academic research:
 - MAX strategy (momentum) significantly outperforms MIN (mean reversion) on Bitcoin 2015-2024
 - Alpaca Markets: Successful Bitcoin trend strategies using momentum + breakouts
 
-Key Principles:
-1. Follow momentum (not fight it)
-2. Volume confirmation (very permissive)
-3. Simple EMA alignment
-4. MINIMAL filtering (maximize trades, let ML and risk management decide quality)
-5. Target: 100+ trades per year on 15m timeframe
+Key Principles (Revised Based on 0-Trade Issue):
+1. ULTRA SIMPLE signal generation - only 5 criteria per direction
+2. Follow momentum (top/bottom 50% = easy to qualify)
+3. Basic trend structure (EMA alignment)
+4. Minimal volume filter (just needs some activity)
+5. Let ML and risk management control quality (not signal generation)
+
+Philosophy:
+- Better to generate 100 signals and ML filters to 50 trades
+- Than to generate 5 signals and ML filters to 0 trades
+- Over-filtering at signal stage kills opportunity
+- Research shows simpler strategies outperform complex ones
 
 Performance Target:
-- Sharpe Ratio: >2.0 (research shows 3.0+ is achievable)
-- Win Rate: 50-60% (with proper R:R this is profitable)
-- Trades: 50-100+ per year
+- Trades: 100-200+ per year (statistically meaningful sample)
+- Win Rate: 45-55% (with 2:1 R:R, this is profitable)
+- Sharpe Ratio: 1.5-2.5+ (realistic for crypto)
+- Max Drawdown: <30%
 """
 
 import numpy as np
@@ -118,25 +125,25 @@ class ResearchBackedTrendSignals:
         # ADX for trend strength
         adx = talib.ADX(df['high'], df['low'], df['close'], timeperiod=14)
 
-        # LONG signal criteria (VERY LIBERAL - maximize trade frequency)
+        # LONG signal criteria (ULTRA SIMPLE - let ML and risk management do the work)
+        # Philosophy: Generate signals liberally, filter with ML and manage with stops
         long_signals = (
             # Positive momentum (top 50% of rolling 100-bar momentum)
             (momentum_score > momentum_score.rolling(100).quantile(0.50)) &
 
-            # Price above EMA9 (simple trend check)
+            # Price above EMA9 (basic uptrend)
             (df['close'] > ema_9) &
 
-            # EMA alignment (short-term above mid-term)
+            # EMA alignment (9 > 21 = bullish structure)
             (ema_9 > ema_21) &
 
-            # Volume confirms (lowered threshold)
-            (volume_ratio > 0.7) &
+            # Some volume activity (very permissive at 0.5)
+            (volume_ratio > 0.5) &
 
-            # Weak trend is OK (ADX > 15, very permissive)
-            (adx > 15) &
+            # Any trend present (ADX > 10, extremely permissive)
+            (adx > 10)
 
-            # Very generous RSI bounds (< 90)
-            (talib.RSI(df['close'], timeperiod=14) < 90)
+            # REMOVED: RSI filter (let ML model handle overbought/oversold)
         )
 
         return long_signals
@@ -167,25 +174,25 @@ class ResearchBackedTrendSignals:
         # ADX for trend strength
         adx = talib.ADX(df['high'], df['low'], df['close'], timeperiod=14)
 
-        # SHORT signal criteria (VERY LIBERAL - maximize trade frequency)
+        # SHORT signal criteria (ULTRA SIMPLE - let ML and risk management do the work)
+        # Philosophy: Generate signals liberally, filter with ML and manage with stops
         short_signals = (
             # Negative momentum (bottom 50% of rolling 100-bar momentum)
             (momentum_score < momentum_score.rolling(100).quantile(0.50)) &
 
-            # Price below EMA9 (simple trend check)
+            # Price below EMA9 (basic downtrend)
             (df['close'] < ema_9) &
 
-            # EMA alignment (short-term below mid-term)
+            # EMA alignment (9 < 21 = bearish structure)
             (ema_9 < ema_21) &
 
-            # Volume confirms (lowered threshold)
-            (volume_ratio > 0.7) &
+            # Some volume activity (very permissive at 0.5)
+            (volume_ratio > 0.5) &
 
-            # Weak trend is OK (ADX > 15, very permissive)
-            (adx > 15) &
+            # Any trend present (ADX > 10, extremely permissive)
+            (adx > 10)
 
-            # Very generous RSI bounds (> 10)
-            (talib.RSI(df['close'], timeperiod=14) > 10)
+            # REMOVED: RSI filter (let ML model handle overbought/oversold)
         )
 
         return short_signals
@@ -352,7 +359,17 @@ class ResearchBackedTrendBot:
         # Combine signals
         trend_data = df_features[df_features['long_signal'] | df_features['short_signal']].copy()
 
-        print(f"Found {len(trend_data)} trend setups (target: 100+ per year)")
+        # Calculate signal statistics
+        long_count = df_features['long_signal'].sum()
+        short_count = df_features['short_signal'].sum()
+        total_signals = len(trend_data)
+        signal_rate = (total_signals / len(df_features)) * 100 if len(df_features) > 0 else 0
+
+        print(f"\n📊 Signal Generation Statistics:")
+        print(f"   Long signals:  {long_count:,}")
+        print(f"   Short signals: {short_count:,}")
+        print(f"   Total signals: {total_signals:,} ({signal_rate:.1f}% of bars)")
+        print(f"   Target: 100-200+ per year")
 
         if len(trend_data) > 10:  # Very low threshold to allow training with less data
             X = trend_data[self.feature_names].fillna(0)
