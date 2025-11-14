@@ -114,10 +114,14 @@ def create_header_metrics(trades):
         return html.Div("No data", className="text-center p-5")
 
     total_trades = len(trades)
-    wins = len([t for t in trades if t.get('pnl_percent', 0) > 0])
+
+    # Use pnl_pct if available, otherwise pnl_percent
+    pnl_key = 'pnl_pct' if 'pnl_pct' in trades[0] else 'pnl_percent'
+
+    wins = len([t for t in trades if t.get(pnl_key, 0) > 0])
     win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
 
-    total_pnl_pct = sum([t.get('pnl_percent', 0) for t in trades]) * 100
+    total_pnl_pct = sum([t.get(pnl_key, 0) for t in trades]) * 100
 
     # Color code
     pnl_color = "text-success" if total_pnl_pct > 0 else "text-danger"
@@ -860,6 +864,10 @@ def update_trade_table(trades, outcome, direction, selected_date):
     # Count trades
     df_filtered = pd.DataFrame(trades) if trades else pd.DataFrame()
     if not df_filtered.empty:
+        # Normalize column names
+        if 'pnl_pct' in df_filtered.columns and 'pnl_percent' not in df_filtered.columns:
+            df_filtered['pnl_percent'] = df_filtered['pnl_pct']
+
         if outcome == 'win':
             df_filtered = df_filtered[df_filtered['pnl_percent'] > 0]
         elif outcome == 'loss':
@@ -887,6 +895,10 @@ def show_trade_details(selected_rows, trades, outcome, direction, selected_date)
 
     # Apply same filters as table
     df = pd.DataFrame(trades)
+
+    # Normalize column names
+    if 'pnl_pct' in df.columns and 'pnl_percent' not in df.columns:
+        df['pnl_percent'] = df['pnl_pct']
 
     if selected_date:
         if 'timestamp' in df.columns:
@@ -933,13 +945,31 @@ def show_trade_details(selected_rows, trades, outcome, direction, selected_date)
             ]),
             html.P([
                 html.Strong("P&L: "),
-                html.Span(f"${trade['pnl_percent'] * 100:.2f} ({trade['pnl_percent']:.2%})",
-                         className="text-success" if trade['pnl_percent'] > 0 else "text-danger",
+                html.Span(f"${trade.get('pnl_usd', trade.get('pnl_percent', 0) * 100):.2f} ({trade.get('pnl_percent', trade.get('pnl_pct', 0)):.2%})",
+                         className="text-success" if trade.get('pnl_percent', trade.get('pnl_pct', 0)) > 0 else "text-danger",
                          style={'fontSize': '16px', 'fontWeight': 'bold'})
             ]),
             html.P([
-                html.Strong("Reason: "),
-                f"{trade['direction']} Mean Reversion: RSI={trade.get('rsi', 0):.1f}, Z-score={trade.get('zscore', 0):.2f}"
+                html.Strong("Signal Type: "),
+                f"{trade['direction']} Mean Reversion"
+            ]),
+            html.Hr(),
+            html.H6("Market Conditions at Entry:", className="text-muted"),
+            html.P([
+                html.Strong("RSI: "), f"{trade.get('features', {}).get('rsi', trade.get('rsi', 0)):.1f} | ",
+                html.Strong("Z-Score: "), f"{trade.get('features', {}).get('zscore', trade.get('zscore', 0)):.2f} | ",
+                html.Strong("BB Position: "), f"{trade.get('features', {}).get('bb_position', 0):.2f}"
+            ]),
+            html.P([
+                html.Strong("Volatility: "), f"{trade.get('features', {}).get('volatility_regime', 'N/A')} | ",
+                html.Strong("Trend: "), f"{trade.get('features', {}).get('trend_strength', 0):.2f} | ",
+                html.Strong("Volume Ratio: "), f"{trade.get('features', {}).get('volume_ratio', 0):.2f}"
+            ]),
+            html.Hr(),
+            html.H6("ML Decision:", className="text-muted"),
+            html.P([
+                html.Strong("Confidence: "), f"{trade.get('ml_confidence', 0):.1%} | ",
+                html.Strong("Success Probability: "), f"{trade.get('ml_success_prob', 0):.1%}"
             ])
         ])
     ], className="mb-3")
