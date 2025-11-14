@@ -457,7 +457,7 @@ class ResearchBackedTrendBot:
 
     def backtest(self, df: pd.DataFrame, initial_capital: float = 100,
                 leverage: int = 10, risk_per_trade: float = 0.05,
-                stop_loss_pct: float = 0.015, take_profit_pct: float = 0.0225,
+                stop_loss_pct: float = 0.015, take_profit_pct: float = 0.015,
                 use_limit_orders: bool = True, use_trailing_stop: bool = True) -> Dict:
         """
         Backtest the research-backed trend following strategy
@@ -468,7 +468,7 @@ class ResearchBackedTrendBot:
             leverage: Leverage multiplier (default 10x)
             risk_per_trade: Fraction of capital to risk per trade (0.05 = 5%)
             stop_loss_pct: Stop loss as % of position value (0.015 = 1.5%)
-            take_profit_pct: Take profit as % of position value (0.03 = 3%)
+            take_profit_pct: Take profit as % of position value (0.015 = 1.5%, 1:1 R:R)
             use_limit_orders: Use limit orders (True) vs market orders (False)
             use_trailing_stop: Move stop to breakeven after 60% of TP reached
 

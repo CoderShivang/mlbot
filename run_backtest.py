@@ -170,7 +170,7 @@ def train_model_with_progress(bot, df, forward_periods=10):
     # This fixes the overfitting problem by matching training to actual trading
     print_info("Generating training labels...")
     print(f"   └─ Simulating actual SL/TP outcomes (not just forward returns)")
-    print(f"   └─ SL: 1.5% | TP: 2.25% | Max hold: {forward_periods} bars")
+    print(f"   └─ SL: 1.5% | TP: 1.5% (1:1 R:R) | Max hold: {forward_periods} bars")
 
     # Identify signals based on bot type
     if is_trend_bot:
@@ -188,7 +188,7 @@ def train_model_with_progress(bot, df, forward_periods=10):
     # Simulate actual trade outcomes with SL/TP (CRITICAL FIX)
     df_features['success'] = 0
     sl_pct = 0.015   # 1.5% stop loss
-    tp_pct = 0.0225  # 2.25% take profit (1.5:1 R:R)
+    tp_pct = 0.015   # 1.5% take profit (1:1 R:R - realistic for 15m timeframe)
 
     print(f"   └─ Simulating {df_features['is_setup'].sum():,} trade outcomes...")
 
@@ -967,8 +967,8 @@ Notes:
                        help='Risk per trade as decimal (default: 0.05 = 5%%)')
     parser.add_argument('--stop-loss', type=float, default=0.015,
                        help='Stop loss %% (default: 0.015 = 1.5%%)')
-    parser.add_argument('--take-profit', type=float, default=0.0225,
-                       help='Take profit %% (default: 0.0225 = 2.25%%, giving 1.5:1 R:R)')
+    parser.add_argument('--take-profit', type=float, default=0.015,
+                       help='Take profit %% (default: 0.015 = 1.5%%, giving 1:1 R:R for 15m timeframe)')
 
     # Order options
     parser.add_argument('--use-market', action='store_true',
