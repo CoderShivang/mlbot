@@ -36,20 +36,27 @@ DAILY_DATA = None
 def load_backtest_data():
     """Load backtest results - prioritize latest detailed results"""
     try:
+        # Get the directory where this script is located
+        script_dir = Path(__file__).parent
+        outputs_dir = script_dir / 'outputs'
+
         # Try latest detailed results first
-        latest_results_path = Path('/mnt/user-data/outputs/latest_backtest_results.json')
+        latest_results_path = outputs_dir / 'latest_backtest_results.json'
         if latest_results_path.exists():
             with open(latest_results_path, 'r') as f:
                 data = json.load(f)
+            print(f"✓ Loaded backtest data from: {latest_results_path}")
             return data  # Returns full structure with 'trades' and 'results'
 
         # Fallback to old trade_history.json
-        trade_history_path = Path('/mnt/user-data/outputs/trade_history.json')
+        trade_history_path = outputs_dir / 'trade_history.json'
         if trade_history_path.exists():
             with open(trade_history_path, 'r') as f:
                 trades = json.load(f)
+            print(f"✓ Loaded trade history from: {trade_history_path}")
             return {'trades': trades, 'results': None}  # Wrap in same structure
 
+        print(f"❌ No backtest data found in: {outputs_dir}")
         return None
     except Exception as e:
         print(f"Error loading data: {e}")
@@ -935,8 +942,14 @@ if __name__ == '__main__':
     print("🚀 ML Mean Reversion Bot Dashboard Starting...")
     print("="*80)
     print("\n📊 Dashboard URL: http://localhost:8050")
-    print("\n⚠️  Make sure you've run 'python example_usage.py' first!")
-    print("   This generates the trade_history.json file needed for the dashboard.\n")
+    print("\n💡 Make sure you've run a backtest first:")
+    print("   python run_backtest.py --days 7")
+
+    # Show actual path
+    script_dir = Path(__file__).parent
+    outputs_dir = script_dir / 'outputs'
+    print(f"\n📁 Dashboard loads from: {outputs_dir / 'latest_backtest_results.json'}")
     print("🔄 Loading dashboard...\n")
 
-    app.run_server(debug=True, host='127.0.0.1', port=8050)
+    app.run(debug=True, host='127.0.0.1', port=8050)
+

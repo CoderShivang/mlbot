@@ -258,8 +258,9 @@ ML Options:
   --forward-periods INT  Forward periods for ML labels (default: 10)
 
 Output Options:
-  --output-dir PATH      Output directory for results (default: /mnt/user-data/outputs)
+  --output-dir PATH      Output directory for results (default: ./outputs)
   --no-save              Do not save model and results
+  --dashboard            Auto-launch dashboard after backtest completes
 
 Help:
   -h, --help             Show help message and exit

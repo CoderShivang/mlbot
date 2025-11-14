@@ -565,8 +565,8 @@ Notes:
                        help='Forward periods for ML labels (default: 10)')
 
     # Output options
-    parser.add_argument('--output-dir', type=str, default='/mnt/user-data/outputs',
-                       help='Output directory for results')
+    parser.add_argument('--output-dir', type=str, default='./outputs',
+                       help='Output directory for results (default: ./outputs)')
     parser.add_argument('--no-save', action='store_true',
                        help='Do not save model and results')
     parser.add_argument('--dashboard', action='store_true',

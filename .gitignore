@@ -38,6 +38,9 @@ trade_history.json
 backtest_results.png
 trading_journal.md
 performance_report.png
+outputs/*.json
+outputs/*.pkl
+outputs/*.png
 
 # IDE
 .vscode/
