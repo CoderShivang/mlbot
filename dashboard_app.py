@@ -33,14 +33,99 @@ app.title = "ML Mean Reversion Bot Dashboard"
 TRADES_DATA = None
 DAILY_DATA = None
 
-def load_backtest_data():
-    """Load backtest results"""
+# Initialize Binance client for fetching candle data
+try:
+    binance_client = Client()  # Public API, no keys needed for historical data
+except Exception as e:
+    print(f"Warning: Could not initialize Binance client: {e}")
+    binance_client = None
+
+def fetch_candles_for_trade(symbol, timestamp, bars_before=50, bars_after=10, interval='15m'):
+    """
+    Fetch candlestick data around a trade entry point
+
+    Args:
+        symbol: Trading pair (e.g., 'BTCUSDT')
+        timestamp: Trade entry timestamp
+        bars_before: Number of candles before entry
+        bars_after: Number of candles after entry
+        interval: Candle interval (default: 15m)
+
+    Returns:
+        DataFrame with OHLCV data or None if fetch fails
+    """
+    if not binance_client:
+        return None
+
     try:
-        trade_history_path = Path('/mnt/user-data/outputs/trade_history.json')
+        # Parse timestamp
+        if isinstance(timestamp, str):
+            entry_time = pd.to_datetime(timestamp)
+        else:
+            entry_time = timestamp
+
+        # Calculate time range (approximate)
+        if interval == '15m':
+            time_per_candle = timedelta(minutes=15)
+        elif interval == '1h':
+            time_per_candle = timedelta(hours=1)
+        elif interval == '5m':
+            time_per_candle = timedelta(minutes=5)
+        else:
+            time_per_candle = timedelta(minutes=15)
+
+        start_time = entry_time - (bars_before * time_per_candle)
+        end_time = entry_time + (bars_after * time_per_candle)
+
+        # Fetch candles from Binance
+        klines = binance_client.get_historical_klines(
+            symbol,
+            interval,
+            start_str=start_time.strftime('%Y-%m-%d %H:%M:%S'),
+            end_str=end_time.strftime('%Y-%m-%d %H:%M:%S')
+        )
+
+        # Convert to DataFrame
+        df = pd.DataFrame(klines, columns=[
+            'timestamp', 'open', 'high', 'low', 'close', 'volume',
+            'close_time', 'quote_volume', 'trades', 'taker_buy_base',
+            'taker_buy_quote', 'ignore'
+        ])
+
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        for col in ['open', 'high', 'low', 'close', 'volume']:
+            df[col] = df[col].astype(float)
+
+        return df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
+
+    except Exception as e:
+        print(f"Error fetching candles: {e}")
+        return None
+
+def load_backtest_data():
+    """Load backtest results - prioritize latest detailed results"""
+    try:
+        # Get the directory where this script is located
+        script_dir = Path(__file__).parent
+        outputs_dir = script_dir / 'outputs'
+
+        # Try latest detailed results first
+        latest_results_path = outputs_dir / 'latest_backtest_results.json'
+        if latest_results_path.exists():
+            with open(latest_results_path, 'r') as f:
+                data = json.load(f)
+            print(f"✓ Loaded backtest data from: {latest_results_path}")
+            return data  # Returns full structure with 'trades' and 'results'
+
+        # Fallback to old trade_history.json
+        trade_history_path = outputs_dir / 'trade_history.json'
         if trade_history_path.exists():
             with open(trade_history_path, 'r') as f:
                 trades = json.load(f)
-            return trades
+            print(f"✓ Loaded trade history from: {trade_history_path}")
+            return {'trades': trades, 'results': None}  # Wrap in same structure
+
+        print(f"❌ No backtest data found in: {outputs_dir}")
         return None
     except Exception as e:
         print(f"Error loading data: {e}")
@@ -52,6 +137,12 @@ def prepare_daily_data(trades):
         return pd.DataFrame()
 
     df = pd.DataFrame(trades)
+
+    # Normalize column names (handle both old and new formats)
+    if 'pnl_pct' in df.columns and 'pnl_percent' not in df.columns:
+        df['pnl_percent'] = df['pnl_pct']
+    if 'pnl_usd' in df.columns and 'pnl_dollars' not in df.columns:
+        df['pnl_dollars'] = df['pnl_usd']
 
     # Parse timestamps
     if 'timestamp' in df.columns:
@@ -92,13 +183,20 @@ def create_header_metrics(trades):
         return html.Div("No data", className="text-center p-5")
 
     total_trades = len(trades)
-    wins = len([t for t in trades if t.get('pnl_percent', 0) > 0])
+
+    # Use pnl_pct if available, otherwise pnl_percent
+    pnl_key = 'pnl_pct' if 'pnl_pct' in trades[0] else 'pnl_percent'
+
+    wins = len([t for t in trades if t.get(pnl_key, 0) > 0])
     win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
 
-    total_pnl_pct = sum([t.get('pnl_percent', 0) for t in trades]) * 100
+    # FIXED: Calculate actual USD P&L by summing individual trade P&L
+    total_pnl_usd = sum([t.get('pnl_usd', 0) for t in trades])
+    # Calculate percentage return (for display)
+    total_pnl_pct = sum([t.get(pnl_key, 0) for t in trades]) * 100
 
     # Color code
-    pnl_color = "text-success" if total_pnl_pct > 0 else "text-danger"
+    pnl_color = "text-success" if total_pnl_usd > 0 else "text-danger"
     wr_color = "text-success" if win_rate >= 60 else "text-warning" if win_rate >= 50 else "text-danger"
 
     return dbc.Row([
@@ -117,7 +215,7 @@ def create_header_metrics(trades):
         dbc.Col([
             html.Div([
                 html.Span("Net P&L: ", style={'fontSize': '18px'}),
-                html.Span(f"${total_pnl_pct*100/100:.2f} ({total_pnl_pct:+.2f}%)",
+                html.Span(f"${total_pnl_usd:.2f} ({total_pnl_pct:+.2f}%)",
                          className=pnl_color, style={'fontSize': '18px', 'fontWeight': 'bold'})
             ])
         ], width=4, className="text-center")
@@ -129,6 +227,10 @@ def create_day_of_week_charts(trades):
         return html.Div("No data")
 
     df = pd.DataFrame(trades)
+
+    # Normalize column names
+    if 'pnl_pct' in df.columns and 'pnl_percent' not in df.columns:
+        df['pnl_percent'] = df['pnl_pct']
 
     # Parse timestamps
     if 'timestamp' in df.columns:
@@ -229,6 +331,11 @@ def create_equity_drawdown_chart(trades):
         return html.Div("No data")
 
     df = pd.DataFrame(trades)
+
+    # Normalize column names
+    if 'pnl_pct' in df.columns and 'pnl_percent' not in df.columns:
+        df['pnl_percent'] = df['pnl_pct']
+
     df['cumulative_pnl'] = df['pnl_percent'].cumsum()
     df['equity'] = 100 * (1 + df['cumulative_pnl'])
 
@@ -400,6 +507,10 @@ def create_trade_table(trades, outcome_filter='all', direction_filter='all'):
 
     df = pd.DataFrame(trades)
 
+    # Normalize column names
+    if 'pnl_pct' in df.columns and 'pnl_percent' not in df.columns:
+        df['pnl_percent'] = df['pnl_pct']
+
     # Apply filters
     if outcome_filter == 'win':
         df = df[df['pnl_percent'] > 0]
@@ -478,6 +589,142 @@ def create_trade_table(trades, outcome_filter='all', direction_filter='all'):
         page_size=10,
         style_table={'overflowX': 'auto'}
     )
+
+def create_ml_decision_analysis(trades):
+    """Create ML decision analysis visualization"""
+    if not trades or len(trades) == 0:
+        return html.Div("No trade data available", className="text-muted")
+
+    # Calculate average feature values for wins vs losses
+    wins = [t for t in trades if t.get('outcome') == 'WIN']
+    losses = [t for t in trades if t.get('outcome') == 'LOSS']
+
+    if not wins and not losses:
+        return html.Div("No completed trades", className="text-muted")
+
+    # Extract feature data
+    feature_names = ['rsi', 'bb_position', 'zscore', 'trend_strength', 'volume_ratio']
+    win_features = {}
+    loss_features = {}
+
+    for feat in feature_names:
+        win_values = [t.get('features', {}).get(feat, 0) for t in wins if 'features' in t]
+        loss_values = [t.get('features', {}).get(feat, 0) for t in losses if 'features' in t]
+
+        win_features[feat] = np.mean(win_values) if win_values else 0
+        loss_features[feat] = np.mean(loss_values) if loss_values else 0
+
+    # Create feature comparison chart
+    fig_features = go.Figure()
+
+    fig_features.add_trace(go.Bar(
+        name='Winning Trades',
+        x=feature_names,
+        y=[win_features[f] for f in feature_names],
+        marker_color='#28a745',
+        text=[f"{win_features[f]:.2f}" for f in feature_names],
+        textposition='outside'
+    ))
+
+    fig_features.add_trace(go.Bar(
+        name='Losing Trades',
+        x=feature_names,
+        y=[loss_features[f] for f in feature_names],
+        marker_color='#dc3545',
+        text=[f"{loss_features[f]:.2f}" for f in feature_names],
+        textposition='outside'
+    ))
+
+    fig_features.update_layout(
+        title="Average Feature Values: Winning vs Losing Trades",
+        xaxis_title="Feature",
+        yaxis_title="Average Value",
+        barmode='group',
+        height=400,
+        hovermode='x unified',
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+
+    # ML Confidence Distribution
+    ml_confidences = [t.get('ml_confidence', 0) for t in trades if 'ml_confidence' in t]
+    outcomes = [t.get('outcome') for t in trades if 'ml_confidence' in t]
+
+    win_confidences = [ml_confidences[i] for i, o in enumerate(outcomes) if o == 'WIN']
+    loss_confidences = [ml_confidences[i] for i, o in enumerate(outcomes) if o == 'LOSS']
+
+    fig_confidence = go.Figure()
+
+    fig_confidence.add_trace(go.Histogram(
+        x=win_confidences,
+        name='Winning Trades',
+        marker_color='#28a745',
+        opacity=0.7,
+        nbinsx=20
+    ))
+
+    fig_confidence.add_trace(go.Histogram(
+        x=loss_confidences,
+        name='Losing Trades',
+        marker_color='#dc3545',
+        opacity=0.7,
+        nbinsx=20
+    ))
+
+    fig_confidence.update_layout(
+        title="ML Confidence Score Distribution",
+        xaxis_title="Confidence Score",
+        yaxis_title="Number of Trades",
+        barmode='overlay',
+        height=350,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+
+    # Stats cards
+    avg_win_conf = np.mean(win_confidences) if win_confidences else 0
+    avg_loss_conf = np.mean(loss_confidences) if loss_confidences else 0
+
+    stats_cards = dbc.Row([
+        dbc.Col([
+            dbc.Card([
+                dbc.CardBody([
+                    html.H6("Avg ML Confidence (Wins)", className="card-subtitle text-muted"),
+                    html.H3(f"{avg_win_conf:.1%}", className="card-title text-success")
+                ])
+            ])
+        ], width=3),
+        dbc.Col([
+            dbc.Card([
+                dbc.CardBody([
+                    html.H6("Avg ML Confidence (Losses)", className="card-subtitle text-muted"),
+                    html.H3(f"{avg_loss_conf:.1%}", className="card-title text-danger")
+                ])
+            ])
+        ], width=3),
+        dbc.Col([
+            dbc.Card([
+                dbc.CardBody([
+                    html.H6("Confidence Difference", className="card-subtitle text-muted"),
+                    html.H3(f"{(avg_win_conf - avg_loss_conf):.1%}",
+                           className=f"card-title {'text-success' if avg_win_conf > avg_loss_conf else 'text-warning'}")
+                ])
+            ])
+        ], width=3),
+        dbc.Col([
+            dbc.Card([
+                dbc.CardBody([
+                    html.H6("Total Analyzed Trades", className="card-subtitle text-muted"),
+                    html.H3(f"{len(trades)}", className="card-title text-primary")
+                ])
+            ])
+        ], width=3)
+    ], className="mb-4")
+
+    return html.Div([
+        stats_cards,
+        dcc.Graph(figure=fig_features),
+        dcc.Graph(figure=fig_confidence)
+    ])
+
 
 # Layout
 app.layout = dbc.Container([
@@ -567,6 +814,17 @@ app.layout = dbc.Container([
         ])
     ], className="mb-4 p-3", style={'backgroundColor': '#f8f9fa', 'borderRadius': '5px'}),
 
+    html.Hr(),
+
+    # ML Decision Analysis
+    html.Div([
+        html.H4("🤖 ML Decision Analysis", className="mb-3"),
+        html.P("Understand what factors influenced the ML model's trade decisions", className="text-muted"),
+        html.Div(id='ml-decision-analysis')
+    ], className="mb-4 p-3", style={'backgroundColor': '#f8f9fa', 'borderRadius': '5px'}),
+
+    html.Hr(),
+
     # Trade List
     html.Div([
         html.H4("Trade List (Click to View Chart)", className="mb-3"),
@@ -585,21 +843,25 @@ app.layout = dbc.Container([
      Output('header-metrics', 'children'),
      Output('day-of-week-charts', 'children'),
      Output('equity-drawdown-chart', 'children'),
-     Output('daily-pnl-table-container', 'children')],
+     Output('daily-pnl-table-container', 'children'),
+     Output('ml-decision-analysis', 'children')],
     Input('trades-store', 'data')
 )
 def load_initial_data(_):
     """Load data on startup"""
-    trades = load_backtest_data()
+    data = load_backtest_data()
 
-    if not trades:
+    if not data:
         no_data = html.Div([
             html.H4("No Backtest Data Found", className="text-center text-danger mt-5"),
             html.P("Please run a backtest first:", className="text-center"),
-            html.Code("python example_usage.py", className="d-block text-center mb-2"),
+            html.Code("python run_backtest.py --days 7", className="d-block text-center mb-2"),
             html.P("Then refresh this page.", className="text-center text-muted")
         ])
-        return None, no_data, no_data, no_data, no_data
+        return None, no_data, no_data, no_data, no_data, no_data
+
+    # Extract trades from data structure
+    trades = data.get('trades', data) if isinstance(data, dict) else data
 
     # Prepare daily data
     daily_df = prepare_daily_data(trades)
@@ -609,7 +871,8 @@ def load_initial_data(_):
         create_header_metrics(trades),
         create_day_of_week_charts(trades),
         create_equity_drawdown_chart(trades),
-        create_daily_pnl_table(daily_df)
+        create_daily_pnl_table(daily_df),
+        create_ml_decision_analysis(trades)
     )
 
 @app.callback(
@@ -673,6 +936,10 @@ def update_trade_table(trades, outcome, direction, selected_date):
     # Count trades
     df_filtered = pd.DataFrame(trades) if trades else pd.DataFrame()
     if not df_filtered.empty:
+        # Normalize column names
+        if 'pnl_pct' in df_filtered.columns and 'pnl_percent' not in df_filtered.columns:
+            df_filtered['pnl_percent'] = df_filtered['pnl_pct']
+
         if outcome == 'win':
             df_filtered = df_filtered[df_filtered['pnl_percent'] > 0]
         elif outcome == 'loss':
@@ -700,6 +967,10 @@ def show_trade_details(selected_rows, trades, outcome, direction, selected_date)
 
     # Apply same filters as table
     df = pd.DataFrame(trades)
+
+    # Normalize column names
+    if 'pnl_pct' in df.columns and 'pnl_percent' not in df.columns:
+        df['pnl_percent'] = df['pnl_pct']
 
     if selected_date:
         if 'timestamp' in df.columns:
@@ -746,36 +1017,142 @@ def show_trade_details(selected_rows, trades, outcome, direction, selected_date)
             ]),
             html.P([
                 html.Strong("P&L: "),
-                html.Span(f"${trade['pnl_percent'] * 100:.2f} ({trade['pnl_percent']:.2%})",
-                         className="text-success" if trade['pnl_percent'] > 0 else "text-danger",
+                html.Span(f"${trade.get('pnl_usd', trade.get('pnl_percent', 0) * 100):.2f} ({trade.get('pnl_percent', trade.get('pnl_pct', 0)):.2%})",
+                         className="text-success" if trade.get('pnl_percent', trade.get('pnl_pct', 0)) > 0 else "text-danger",
                          style={'fontSize': '16px', 'fontWeight': 'bold'})
             ]),
             html.P([
-                html.Strong("Reason: "),
-                f"{trade['direction']} Mean Reversion: RSI={trade.get('rsi', 0):.1f}, Z-score={trade.get('zscore', 0):.2f}"
+                html.Strong("Signal Type: "),
+                f"{trade['direction']} Mean Reversion"
+            ]),
+            html.Hr(),
+            html.H6("Market Conditions at Entry:", className="text-muted"),
+            html.P([
+                html.Strong("RSI: "), f"{trade.get('features', {}).get('rsi', trade.get('rsi', 0)):.1f} | ",
+                html.Strong("Z-Score: "), f"{trade.get('features', {}).get('zscore', trade.get('zscore', 0)):.2f} | ",
+                html.Strong("BB Position: "), f"{trade.get('features', {}).get('bb_position', 0):.2f}"
+            ]),
+            html.P([
+                html.Strong("Volatility: "), f"{trade.get('features', {}).get('volatility_regime', 'N/A')} | ",
+                html.Strong("Trend: "), f"{trade.get('features', {}).get('trend_strength', 0):.2f} | ",
+                html.Strong("Volume Ratio: "), f"{trade.get('features', {}).get('volume_ratio', 0):.2f}"
+            ]),
+            html.Hr(),
+            html.H6("ML Decision:", className="text-muted"),
+            html.P([
+                html.Strong("Confidence: "), f"{trade.get('ml_confidence', 0):.1%} | ",
+                html.Strong("Success Probability: "), f"{trade.get('ml_success_prob', 0):.1%}"
             ])
         ])
     ], className="mb-3")
 
-    # Note: Candlestick chart would require historical price data
-    # which isn't stored in trade_history.json
-    # You would need to fetch this from Binance or store it during backtest
+    # Fetch and render candlestick chart
+    chart_section = html.Div()
 
-    note = dbc.Alert([
-        html.Strong("ℹ️ Note: "),
-        "Candlestick charts require historical price data. ",
-        "This can be added by storing candle data during backtest or fetching from Binance API."
-    ], color="info")
+    if binance_client:
+        try:
+            # Fetch candles from Binance
+            candles_df = fetch_candles_for_trade(
+                symbol='BTCUSDT',  # TODO: Get from backtest params
+                timestamp=trade.get('timestamp'),
+                bars_before=50,
+                bars_after=10,
+                interval='15m'
+            )
 
-    return html.Div([details_card, note])
+            if candles_df is not None and len(candles_df) > 0:
+                # Create candlestick chart
+                fig = go.Figure()
+
+                # Add candlestick
+                fig.add_trace(go.Candlestick(
+                    x=candles_df['timestamp'],
+                    open=candles_df['open'],
+                    high=candles_df['high'],
+                    low=candles_df['low'],
+                    close=candles_df['close'],
+                    name='Price',
+                    increasing_line_color='#26a69a',
+                    decreasing_line_color='#ef5350'
+                ))
+
+                # Mark entry point
+                entry_time = pd.to_datetime(trade.get('timestamp'))
+                entry_price = trade['entry_price']
+
+                fig.add_trace(go.Scatter(
+                    x=[entry_time],
+                    y=[entry_price],
+                    mode='markers',
+                    marker=dict(
+                        size=15,
+                        color='blue' if trade['direction'] == 'LONG' else 'red',
+                        symbol='triangle-up' if trade['direction'] == 'LONG' else 'triangle-down',
+                        line=dict(width=2, color='white')
+                    ),
+                    name=f"Entry ({trade['direction']})",
+                    showlegend=True
+                ))
+
+                # Mark exit point (approximate - same timestamp + a few candles)
+                exit_price = trade.get('exit_price', 0)
+                if exit_price > 0:
+                    # Estimate exit time (after entry)
+                    exit_idx = min(len(candles_df) - 1, 50 + 5)  # ~5 candles after entry
+                    exit_time = candles_df.iloc[exit_idx]['timestamp']
+
+                    fig.add_trace(go.Scatter(
+                        x=[exit_time],
+                        y=[exit_price],
+                        mode='markers',
+                        marker=dict(
+                            size=15,
+                            color='green' if trade.get('pnl_percent', trade.get('pnl_pct', 0)) > 0 else 'red',
+                            symbol='x',
+                            line=dict(width=2, color='white')
+                        ),
+                        name=f"Exit ({'WIN' if trade.get('pnl_percent', trade.get('pnl_pct', 0)) > 0 else 'LOSS'})",
+                        showlegend=True
+                    ))
+
+                fig.update_layout(
+                    title=f"Trade Chart - {trade['direction']} @ ${entry_price:,.2f}",
+                    xaxis_title="Time",
+                    yaxis_title="Price (USDT)",
+                    height=500,
+                    xaxis_rangeslider_visible=False,
+                    hovermode='x unified',
+                    template='plotly_white'
+                )
+
+                chart_section = dcc.Graph(figure=fig)
+            else:
+                chart_section = dbc.Alert("Could not fetch candle data from Binance", color="warning")
+
+        except Exception as e:
+            chart_section = dbc.Alert(f"Error loading chart: {str(e)}", color="warning")
+    else:
+        chart_section = dbc.Alert([
+            html.Strong("ℹ️ Note: "),
+            "Candlestick charts require Binance API connection. ",
+            "Charts are not available in offline mode."
+        ], color="info")
+
+    return html.Div([details_card, html.Hr(), chart_section])
 
 if __name__ == '__main__':
     print("="*80)
     print("🚀 ML Mean Reversion Bot Dashboard Starting...")
     print("="*80)
     print("\n📊 Dashboard URL: http://localhost:8050")
-    print("\n⚠️  Make sure you've run 'python example_usage.py' first!")
-    print("   This generates the trade_history.json file needed for the dashboard.\n")
+    print("\n💡 Make sure you've run a backtest first:")
+    print("   python run_backtest.py --days 7")
+
+    # Show actual path
+    script_dir = Path(__file__).parent
+    outputs_dir = script_dir / 'outputs'
+    print(f"\n📁 Dashboard loads from: {outputs_dir / 'latest_backtest_results.json'}")
     print("🔄 Loading dashboard...\n")
 
-    app.run_server(debug=True, host='127.0.0.1', port=8050)
+    app.run(debug=True, host='127.0.0.1', port=8050)
+
