@@ -35,7 +35,7 @@ from binance.client import Client
 sys.path.insert(0, str(Path(__file__).parent))
 
 from ml_mean_reversion_bot import MLMeanReversionBot
-from trend_following_strategy import ExtremeTrendFollowingBot
+from trend_strategy_v2 import ResearchBackedTrendBot
 from combined_strategy import CombinedStrategyBot
 from enhanced_features import EnhancedFeatureEngineering
 from dynamic_risk_management import DynamicRiskManager
@@ -734,8 +734,8 @@ def initialize_bot_for_strategy(strategy: str, model_type: str, min_confidence: 
         return bot
 
     elif strategy == 'extremetrends':
-        print_info("Initializing Extreme Trend Following Bot...")
-        bot = ExtremeTrendFollowingBot(model_type, min_confidence)
+        print_info("Initializing Research-Backed Trend Following Bot...")
+        bot = ResearchBackedTrendBot(model_type, min_confidence)
         return bot
 
     elif strategy == 'combined':
@@ -746,7 +746,7 @@ def initialize_bot_for_strategy(strategy: str, model_type: str, min_confidence: 
         meanrev_bot.ml_model = EnhancedMLModel(model_type, min_confidence)
         meanrev_bot.ml_model.feature_names = meanrev_bot.feature_engineer.get_feature_list()
 
-        trend_bot = ExtremeTrendFollowingBot(model_type, min_confidence)
+        trend_bot = ResearchBackedTrendBot(model_type, min_confidence)
 
         # Create combined bot
         bot = CombinedStrategyBot(meanrev_bot, trend_bot, min_confidence)
@@ -938,16 +938,6 @@ Default: gradientboost''')
     # Initialize bot based on strategy choice
     bot = initialize_bot_for_strategy(args.strat, args.model, args.min_confidence)
     print_success("Bot initialized")
-
-    # Warn if using experimental strategy
-    if args.strat == 'extremetrends':
-        print_warning("⚠️  EXPERIMENTAL: extremetrends strategy is not fully implemented")
-        print_warning("The backtest engine isn't fully integrated yet.")
-        print_warning("For now, please use:")
-        print("  --strat meanrev     (mean reversion, fully working)")
-        print("  --strat combined    (both strategies, fully working)")
-        print("\nExiting...")
-        sys.exit(1)
 
     # Fetch data
     try:
