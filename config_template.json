@@ -1,0 +1,64 @@
+# Configuration file for ML Mean Reversion Bot
+# Copy this to config.json and customize your settings
+
+{
+  "api": {
+    "key": "YOUR_BINANCE_API_KEY",
+    "secret": "YOUR_BINANCE_API_SECRET",
+    "testnet": true
+  },
+  
+  "trading": {
+    "symbol": "BTCUSDT",
+    "interval": "15m",
+    "leverage": 3,
+    "risk_per_trade": 0.02,
+    "stop_loss_pct": 0.02,
+    "take_profit_pct": 0.03,
+    "max_positions": 1,
+    "check_interval_seconds": 60
+  },
+  
+  "strategy": {
+    "rsi_oversold_threshold": 30,
+    "rsi_overbought_threshold": 70,
+    "bb_lower_threshold": 0.2,
+    "bb_upper_threshold": 0.8,
+    "zscore_long_threshold": -1.5,
+    "zscore_short_threshold": 1.5,
+    "ml_confidence_threshold": 0.65
+  },
+  
+  "ml_model": {
+    "model_type": "GradientBoostingClassifier",
+    "n_estimators": 200,
+    "learning_rate": 0.05,
+    "max_depth": 5,
+    "random_state": 42
+  },
+  
+  "backtesting": {
+    "initial_capital": 10000,
+    "lookback_days": 90,
+    "forward_periods": 10
+  },
+  
+  "risk_management": {
+    "max_daily_loss_pct": 0.05,
+    "max_drawdown_pct": 0.15,
+    "emergency_stop_enabled": true
+  },
+  
+  "logging": {
+    "log_level": "INFO",
+    "log_file": "trading_bot.log",
+    "save_trades": true
+  },
+  
+  "notifications": {
+    "enabled": false,
+    "email": null,
+    "telegram_bot_token": null,
+    "telegram_chat_id": null
+  }
+}
