@@ -309,6 +309,47 @@ class EnhancedMLModel:
         # No-op: Enhanced model doesn't use online learning
         pass
 
+    def save_model(self, filepath: str) -> None:
+        """
+        Save model to file (compatibility method)
+
+        Args:
+            filepath: Path to save the model
+        """
+        import pickle
+
+        # Save model state
+        model_state = {
+            'model': self.model,
+            'scaler': self.scaler,
+            'feature_names': self.feature_names,
+            'is_trained': self.is_trained,
+            'model_type': self.model_type,
+            'min_confidence': self.min_confidence
+        }
+
+        with open(filepath, 'wb') as f:
+            pickle.dump(model_state, f)
+
+    def load_model(self, filepath: str) -> None:
+        """
+        Load model from file (compatibility method)
+
+        Args:
+            filepath: Path to load the model from
+        """
+        import pickle
+
+        with open(filepath, 'rb') as f:
+            model_state = pickle.load(f)
+
+        self.model = model_state['model']
+        self.scaler = model_state['scaler']
+        self.feature_names = model_state['feature_names']
+        self.is_trained = model_state['is_trained']
+        self.model_type = model_state.get('model_type', 'gradientboost')
+        self.min_confidence = model_state.get('min_confidence', 0.65)
+
     def get_feature_importance(self, top_n: int = 15) -> pd.DataFrame:
         """
         Get feature importance
