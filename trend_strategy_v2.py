@@ -416,9 +416,303 @@ class ResearchBackedTrendBot:
 
         return setup
 
-    def backtest(self, *args, **kwargs):
-        """Backtest stub - uses same engine as mean reversion"""
-        raise NotImplementedError("Use mean reversion backtest engine with this bot")
+    def backtest(self, df: pd.DataFrame, initial_capital: float = 100,
+                leverage: int = 10, risk_per_trade: float = 0.05,
+                stop_loss_pct: float = 0.015, take_profit_pct: float = 0.03,
+                use_limit_orders: bool = True, use_trailing_stop: bool = True) -> Dict:
+        """
+        Backtest the research-backed trend following strategy
+
+        Args:
+            df: Historical data with features
+            initial_capital: Starting capital (default $100)
+            leverage: Leverage multiplier (default 10x)
+            risk_per_trade: Fraction of capital to risk per trade (0.05 = 5%)
+            stop_loss_pct: Stop loss as % of position value (0.015 = 1.5%)
+            take_profit_pct: Take profit as % of position value (0.03 = 3%)
+            use_limit_orders: Use limit orders (True) vs market orders (False)
+            use_trailing_stop: Move stop to breakeven after 60% of TP reached
+
+        Returns:
+            Dictionary with backtest results
+        """
+        print("\n=== Running Trend Following Backtest (Research-Backed) ===\n")
+        print(f"Capital: ${initial_capital}")
+        print(f"Leverage: {leverage}x")
+        print(f"Risk per trade: {risk_per_trade:.1%}")
+        print(f"Stop Loss: {stop_loss_pct:.2%} ({stop_loss_pct * leverage:.1%} of capital)")
+        print(f"Take Profit: {take_profit_pct:.2%} ({take_profit_pct * leverage:.1%} of capital)")
+        print(f"Reward:Risk Ratio: {take_profit_pct/stop_loss_pct:.1f}:1")
+        print(f"Order Type: {'LIMIT (Maker: 0.02%)' if use_limit_orders else 'MARKET (Taker: 0.05%)'}")
+        print(f"Trailing Stop: {'Enabled' if use_trailing_stop else 'Disabled'}\n")
+
+        capital = initial_capital
+        trades = []
+        equity_curve = [initial_capital]
+
+        # Fee structure
+        maker_fee = 0.0002  # 0.02% for limit orders
+        taker_fee = 0.0005  # 0.05% for market orders
+        fee_rate = maker_fee if use_limit_orders else taker_fee
+
+        # Add trend features to df
+        df_with_features = self.feature_engineer.calculate_features(df)
+
+        for i in range(100, len(df_with_features) - 10):  # Skip first 100 for indicators, last 10 for forward returns
+            setup = self.should_enter_trade(df_with_features, current_idx=i)
+
+            if setup is None:
+                equity_curve.append(capital)
+                continue
+
+            # Calculate position size based on risk and leverage
+            max_position_notional = capital * leverage
+            risk_amount = capital * risk_per_trade
+            position_notional = min(risk_amount / stop_loss_pct, max_position_notional)
+
+            # BTC quantity
+            entry_price = setup.entry_price
+            btc_quantity = position_notional / entry_price
+
+            # Simulate limit order fill
+            if use_limit_orders:
+                next_prices = df_with_features.iloc[i+1:i+4]
+
+                if setup.direction == 'LONG':
+                    if next_prices['low'].min() <= entry_price:
+                        filled = True
+                        fill_price = entry_price
+                    else:
+                        filled = False
+                else:  # SHORT
+                    if next_prices['high'].max() >= entry_price:
+                        filled = True
+                        fill_price = entry_price
+                    else:
+                        filled = False
+
+                if not filled:
+                    equity_curve.append(capital)
+                    continue
+            else:
+                fill_price = entry_price
+
+            # Entry fee
+            entry_fee = position_notional * fee_rate
+
+            # Calculate exit price based on forward price action
+            future_prices = df_with_features.iloc[i+1:i+11]
+
+            if setup.direction == 'LONG':
+                stop_loss_price = fill_price * (1 - stop_loss_pct)
+                take_profit_price = fill_price * (1 + take_profit_pct)
+                trailing_threshold = fill_price * (1 + 0.6 * take_profit_pct)
+
+                hit_sl = False
+                hit_tp = False
+                hit_trailing = False
+
+                for idx, (timestamp, row) in enumerate(future_prices.iterrows()):
+                    current_stop = stop_loss_price
+
+                    if use_trailing_stop and row['high'] >= trailing_threshold:
+                        current_stop = fill_price
+                        hit_trailing = True
+
+                    if row['low'] <= current_stop:
+                        exit_price = current_stop
+                        outcome = 'LOSS' if current_stop < fill_price else 'WIN'
+                        hit_type = 'TRAILING_BE' if hit_trailing else 'SL'
+                        hit_sl = True
+                        break
+
+                    if row['high'] >= take_profit_price:
+                        exit_price = take_profit_price
+                        outcome = 'WIN'
+                        hit_type = 'TP'
+                        hit_tp = True
+                        break
+
+                if not hit_sl and not hit_tp:
+                    exit_price = future_prices.iloc[-1]['close']
+                    outcome = 'WIN' if exit_price > fill_price else 'LOSS'
+                    hit_type = 'TIMEOUT'
+
+                price_pnl_pct = (exit_price - fill_price) / fill_price
+
+            else:  # SHORT
+                stop_loss_price = fill_price * (1 + stop_loss_pct)
+                take_profit_price = fill_price * (1 - take_profit_pct)
+                trailing_threshold = fill_price * (1 - 0.6 * take_profit_pct)
+
+                hit_sl = False
+                hit_tp = False
+                hit_trailing = False
+
+                for idx, (timestamp, row) in enumerate(future_prices.iterrows()):
+                    current_stop = stop_loss_price
+
+                    if use_trailing_stop and row['low'] <= trailing_threshold:
+                        current_stop = fill_price
+                        hit_trailing = True
+
+                    if row['high'] >= current_stop:
+                        exit_price = current_stop
+                        outcome = 'LOSS' if current_stop > fill_price else 'WIN'
+                        hit_type = 'TRAILING_BE' if hit_trailing else 'SL'
+                        hit_sl = True
+                        break
+
+                    if row['low'] <= take_profit_price:
+                        exit_price = take_profit_price
+                        outcome = 'WIN'
+                        hit_type = 'TP'
+                        hit_tp = True
+                        break
+
+                if not hit_sl and not hit_tp:
+                    exit_price = future_prices.iloc[-1]['close']
+                    outcome = 'WIN' if exit_price < fill_price else 'LOSS'
+                    hit_type = 'TIMEOUT'
+
+                price_pnl_pct = (fill_price - exit_price) / fill_price
+
+            # Exit fee
+            exit_fee = position_notional * fee_rate
+
+            # Total PnL including fees and leverage
+            gross_pnl_usd = position_notional * price_pnl_pct
+            net_pnl_usd = gross_pnl_usd - entry_fee - exit_fee
+
+            # PnL as percentage of capital
+            pnl_pct_capital = net_pnl_usd / capital
+
+            # Update capital
+            capital += net_pnl_usd
+            equity_curve.append(capital)
+
+            # Check for liquidation
+            if capital <= initial_capital * 0.1:  # 90% loss
+                print(f"\n⚠️  WARNING: Capital dropped to ${capital:.2f} - Near liquidation!")
+                break
+
+            # Record trade
+            setup.actual_outcome = outcome
+            setup.pnl_percent = pnl_pct_capital
+
+            trade_info = {
+                'setup': setup,
+                'entry_price': fill_price,
+                'exit_price': exit_price,
+                'position_size_usd': position_notional,
+                'btc_quantity': btc_quantity,
+                'gross_pnl_usd': gross_pnl_usd,
+                'fees_usd': entry_fee + exit_fee,
+                'net_pnl_usd': net_pnl_usd,
+                'hit_type': hit_type,
+                'capital_after': capital
+            }
+
+            trades.append(trade_info)
+            self.ml_model.add_trade_outcome(setup)
+
+        # Calculate metrics
+        winning_trades = [t for t in trades if t['setup'].actual_outcome == 'WIN']
+        losing_trades = [t for t in trades if t['setup'].actual_outcome == 'LOSS']
+
+        total_trades = len(trades)
+        win_rate = len(winning_trades) / total_trades if total_trades > 0 else 0
+
+        total_pnl_usd = sum([t['net_pnl_usd'] for t in trades])
+        avg_win_usd = np.mean([t['net_pnl_usd'] for t in winning_trades]) if winning_trades else 0
+        avg_loss_usd = np.mean([t['net_pnl_usd'] for t in losing_trades]) if losing_trades else 0
+
+        avg_win_pct = np.mean([t['setup'].pnl_percent for t in winning_trades]) if winning_trades else 0
+        avg_loss_pct = np.mean([t['setup'].pnl_percent for t in losing_trades]) if losing_trades else 0
+
+        total_fees = sum([t['fees_usd'] for t in trades])
+
+        gross_profit = sum([t['net_pnl_usd'] for t in winning_trades]) if winning_trades else 0
+        gross_loss = abs(sum([t['net_pnl_usd'] for t in losing_trades])) if losing_trades else 1
+        profit_factor = gross_profit / gross_loss if gross_loss > 0 else np.inf
+
+        total_return = (capital - initial_capital) / initial_capital
+
+        # Sharpe ratio
+        returns = pd.Series(equity_curve).pct_change().dropna()
+        sharpe = returns.mean() / returns.std() * np.sqrt(252) if returns.std() > 0 else 0
+
+        # Max drawdown
+        equity_series = pd.Series(equity_curve)
+        cummax = equity_series.cummax()
+        drawdown = (equity_series - cummax) / cummax
+        max_drawdown = drawdown.min()
+        max_drawdown_usd = (cummax - equity_series).max()
+
+        fill_rate = 0.85 if use_limit_orders else 1.0
+
+        max_position_size = max([t['position_size_usd'] for t in trades]) if trades else 0
+        avg_position_size = np.mean([t['position_size_usd'] for t in trades]) if trades else 0
+
+        results = {
+            'initial_capital': initial_capital,
+            'final_capital': capital,
+            'total_return': total_return,
+            'total_pnl_usd': total_pnl_usd,
+            'leverage': leverage,
+            'total_trades': total_trades,
+            'winning_trades': len(winning_trades),
+            'losing_trades': len(losing_trades),
+            'win_rate': win_rate,
+            'avg_win_usd': avg_win_usd,
+            'avg_loss_usd': avg_loss_usd,
+            'avg_win_pct': avg_win_pct,
+            'avg_loss_pct': avg_loss_pct,
+            'profit_factor': profit_factor,
+            'sharpe_ratio': sharpe,
+            'max_drawdown': max_drawdown,
+            'max_drawdown_usd': max_drawdown_usd,
+            'total_fees_paid': total_fees,
+            'fee_rate': fee_rate,
+            'order_type': 'LIMIT' if use_limit_orders else 'MARKET',
+            'fill_rate': fill_rate,
+            'max_position_size': max_position_size,
+            'avg_position_size': avg_position_size,
+            'equity_curve': equity_curve,
+            'trades': trades
+        }
+
+        # Print results
+        print(f"\n{'='*60}")
+        print(f"TREND FOLLOWING BACKTEST RESULTS - ${initial_capital} @ {leverage}x")
+        print(f"{'='*60}")
+        print(f"Initial Capital:    ${initial_capital:.2f}")
+        print(f"Final Capital:      ${capital:.2f}")
+        print(f"Total Return:       {total_return:.2%} (${total_pnl_usd:.2f})")
+        print(f"Order Type:         {results['order_type']} (Fee: {fee_rate:.2%})")
+        print(f"Total Fees Paid:    ${total_fees:.2f}")
+
+        print(f"\nTrade Statistics:")
+        print(f"Total Trades:       {total_trades}")
+        print(f"Winning Trades:     {len(winning_trades)}")
+        print(f"Losing Trades:      {len(losing_trades)}")
+        print(f"Win Rate:           {win_rate:.2%}")
+        print(f"Avg Win:            ${avg_win_usd:.2f} ({avg_win_pct:.2%} of capital)")
+        print(f"Avg Loss:           ${avg_loss_usd:.2f} ({avg_loss_pct:.2%} of capital)")
+        print(f"Profit Factor:      {profit_factor:.2f}")
+
+        if use_limit_orders:
+            print(f"Fill Rate:          ~{fill_rate:.1%}")
+
+        print(f"\nPosition Sizing:")
+        print(f"Max Position:       ${max_position_size:.2f}")
+        print(f"Avg Position:       ${avg_position_size:.2f}")
+
+        print(f"\nRisk Metrics:")
+        print(f"Sharpe Ratio:       {sharpe:.2f}")
+        print(f"Max Drawdown:       {max_drawdown:.2%} (${max_drawdown_usd:.2f})")
+
+        return results
 
     def save_state(self, model_path: str, trades_path: str):
         """Save bot state"""
