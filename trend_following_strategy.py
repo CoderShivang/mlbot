@@ -310,11 +310,16 @@ class ExtremeTrendFollowingBot:
             min_confidence: Minimum confidence for trading
         """
         from model_factory import EnhancedMLModel
+        from ml_mean_reversion_bot import FeatureEngineering
 
-        self.model = EnhancedMLModel(model_type, min_confidence)
+        # Use ml_model for consistency with MLMeanReversionBot
+        self.ml_model = EnhancedMLModel(model_type, min_confidence)
         self.signal_generator = TrendSignalGenerator()
         self.feature_engineer = TrendFeatureEngineering()
         self.feature_names = self.feature_engineer.get_trend_feature_list()
+
+        # Also need base feature engineering for compatibility
+        self.base_feature_engineer = FeatureEngineering()
 
     def train_model(self, df: pd.DataFrame, forward_periods: int = 10):
         """Train ML model on extreme trend data"""
@@ -337,7 +342,7 @@ class ExtremeTrendFollowingBot:
             print(f"Training on {len(trend_data)} extreme trend setups...")
             X = trend_data[self.feature_names].fillna(0)
             y = trend_data['forward_return']
-            results = self.model.train(X, y)
+            results = self.ml_model.train(X, y)
             print(f"✅ Model trained: {results['accuracy']:.2%} accuracy")
         else:
             print(f"⚠️  Only {len(trend_data)} trend setups found. Need at least 30 for training.")
@@ -381,7 +386,7 @@ class ExtremeTrendFollowingBot:
 
         # Get ML prediction
         features = current[self.feature_names]
-        ml_prediction = self.model.predict_with_confidence(features)
+        ml_prediction = self.ml_model.predict_with_confidence(features)
 
         setup.confidence_score = ml_prediction['confidence_score']
         setup.predicted_continuation_prob = ml_prediction['success_probability']
@@ -390,3 +395,14 @@ class ExtremeTrendFollowingBot:
             return None
 
         return setup
+
+    def backtest(self, *args, **kwargs):
+        """
+        Backtest method stub - trend following uses same backtesting engine as mean reversion
+        For now, raise NotImplementedError
+        """
+        raise NotImplementedError("Trend following backtest not yet fully implemented. Use meanrev or combined strategy.")
+
+    def save_state(self, model_path: str, trades_path: str):
+        """Save bot state"""
+        self.ml_model.save_model(model_path)

@@ -518,6 +518,19 @@ def walk_forward_backtest(bot, df, args):
     print(f"{Colors.GREEN}{Colors.BOLD}WALK-FORWARD AGGREGATE RESULTS{Colors.ENDC}")
     print(f"{Colors.GREEN}{'='*80}{Colors.ENDC}\n")
 
+    # Check if we have any results
+    if not window_results:
+        print_error("All walk-forward windows failed!")
+        print_error("This usually means:")
+        print("  - The strategy couldn't find any trade setups")
+        print("  - Training data was insufficient")
+        print("  - There was an error in the bot's logic")
+        print("\nTry:")
+        print("  1. Use a different strategy: --strat meanrev or --strat combined")
+        print("  2. Use more data: --days 365 or more")
+        print("  3. Lower confidence threshold: --min-confidence 0.60")
+        sys.exit(1)
+
     # Combine all trades
     all_trades = []
     for wr in window_results:
@@ -925,6 +938,16 @@ Default: gradientboost''')
     # Initialize bot based on strategy choice
     bot = initialize_bot_for_strategy(args.strat, args.model, args.min_confidence)
     print_success("Bot initialized")
+
+    # Warn if using experimental strategy
+    if args.strat == 'extremetrends':
+        print_warning("⚠️  EXPERIMENTAL: extremetrends strategy is not fully implemented")
+        print_warning("The backtest engine isn't fully integrated yet.")
+        print_warning("For now, please use:")
+        print("  --strat meanrev     (mean reversion, fully working)")
+        print("  --strat combined    (both strategies, fully working)")
+        print("\nExiting...")
+        sys.exit(1)
 
     # Fetch data
     try:
